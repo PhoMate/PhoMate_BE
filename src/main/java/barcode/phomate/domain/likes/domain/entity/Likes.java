@@ -1,6 +1,7 @@
-package barcode.phomate.domain.post.domain.entity;
+package barcode.phomate.domain.likes.domain.entity;
 
 import barcode.phomate.domain.member.domain.entity.Member;
+import barcode.phomate.domain.post.domain.entity.Post;
 import barcode.phomate.global.common.entity.BaseEntity;
 import jakarta.persistence.*;
 import lombok.AccessLevel;
@@ -13,7 +14,8 @@ import org.hibernate.annotations.OnDeleteAction;
 @Entity
 @Getter
 @NoArgsConstructor(access = AccessLevel.PROTECTED)
-public class Post extends BaseEntity {
+@Table(uniqueConstraints = @UniqueConstraint(columnNames = {"member_id","post_id"}))
+public class Likes extends BaseEntity {
 
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
@@ -24,22 +26,14 @@ public class Post extends BaseEntity {
     @OnDelete(action = OnDeleteAction.CASCADE)
     private Member member;
 
-    @Column(nullable=false)
-    private String title;
-
-    @Column(nullable=false)
-    private String description;
-
-    @Column(length = 2048)
-    private String imageUrl;
+    @ManyToOne(fetch = FetchType.LAZY, optional = false)
+    @JoinColumn(name = "post_id", nullable = false)
+    @OnDelete(action = OnDeleteAction.CASCADE)
+    private Post post;
 
     @Builder
-    public Post(Member member, String title, String description, String imageUrl) {
+    public Likes(Member member, Post post) {
         this.member = member;
-        this.title = title;
-        this.description = description;
-        this.imageUrl = imageUrl;
+        this.post = post;
     }
-
 }
-
