@@ -1,8 +1,15 @@
-package barcode.phomate.domain.post.domain.entity;
+package barcode.phomate.domain.chat.entity;
 
 import barcode.phomate.domain.member.domain.entity.Member;
 import barcode.phomate.global.common.entity.BaseEntity;
-import jakarta.persistence.*;
+import jakarta.persistence.Entity;
+import jakarta.persistence.FetchType;
+import jakarta.persistence.GeneratedValue;
+import jakarta.persistence.GenerationType;
+import jakarta.persistence.Id;
+import jakarta.persistence.JoinColumn;
+import jakarta.persistence.ManyToOne;
+import jakarta.persistence.Table;
 import lombok.AccessLevel;
 import lombok.Builder;
 import lombok.Getter;
@@ -13,7 +20,8 @@ import org.hibernate.annotations.OnDeleteAction;
 @Entity
 @Getter
 @NoArgsConstructor(access = AccessLevel.PROTECTED)
-public class Post extends BaseEntity {
+@Table(name = "chat_session")
+public class ChatSession extends BaseEntity {
 
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
@@ -24,22 +32,8 @@ public class Post extends BaseEntity {
     @OnDelete(action = OnDeleteAction.CASCADE)
     private Member member;
 
-    @Column(nullable=false)
-    private String title;
-
-    @Column(nullable=false, columnDefinition = "TEXT")
-    private String description;
-
-    @Column(length = 2048)
-    private String imageUrl;
-
     @Builder
-    public Post(Member member, String title, String description, String imageUrl) {
+    public ChatSession(Member member) {
         this.member = member;
-        this.title = title;
-        this.description = description;
-        this.imageUrl = imageUrl;
     }
-
 }
-
