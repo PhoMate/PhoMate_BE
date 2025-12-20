@@ -1,5 +1,6 @@
 package barcode.phomate.global.fastapi;
 
+import barcode.phomate.global.fastapi.dto.EmbedRequestDTO;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.MediaType;
 import org.springframework.stereotype.Component;
@@ -16,7 +17,7 @@ public class EmbeddingWorkerClient {
                 .build();
     }
 
-    public void requestPostEmbedding(EmbedRequest req) {
+    public void requestPostEmbedding(EmbedRequestDTO req) {
         webClient.post()
                 .uri("/jobs/post-embedding")
                 .contentType(MediaType.APPLICATION_JSON)
@@ -26,11 +27,4 @@ public class EmbeddingWorkerClient {
                 .block();
     }
 
-    public record EmbedRequest(
-            Long postId,
-            Long memberId,
-            String imageUrl,
-            String text,
-            Long createdAtMs
-    ) {}
 }
