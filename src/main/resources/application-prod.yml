@@ -29,6 +29,14 @@ spring:
         options:
           model: ${OPENAI_MODEL:gpt-4o-mini}
 
+  cloud:
+    aws:
+      region:
+        static: ap-northeast-2
+      credentials:
+        access-key: ${AWS_ACCESS_KEY}
+        secret-key: ${AWS_SECRET_ACCESS_KEY}
+
   servlet:
     multipart:
       max-file-size: 25MB
