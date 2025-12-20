@@ -36,6 +36,9 @@ public class Post extends BaseEntity {
     @Column(nullable = false, length = 512)
     private String originalKey;
 
+    @Column(nullable = false)
+    private long likeCount;
+
     @Builder
     public Post(Member member, String title, String description, String imagePrefix, String originalKey) {
         this.member = member;
@@ -43,11 +46,18 @@ public class Post extends BaseEntity {
         this.description = description;
         this.imagePrefix = imagePrefix;
         this.originalKey = originalKey;
+        this.likeCount = 0;
     }
 
     public void updateImageKeys(String imagePrefix, String originalKey) {
         this.imagePrefix = imagePrefix;
         this.originalKey = originalKey;
+    }
+
+    public void increaseLikeCount() { this.likeCount++; }
+
+    public void decreaseLikeCount() {
+        if (this.likeCount > 0) this.likeCount--;
     }
 
     public String thumbnailKey() { return imagePrefix + "/t.jpg"; }

@@ -2,6 +2,8 @@ package barcode.phomate.domain.post.api;
 
 import barcode.phomate.domain.post.application.PostService;
 import barcode.phomate.domain.post.dto.PostCreateRequestDTO;
+import barcode.phomate.domain.post.dto.PostFeedResponseDTO;
+import barcode.phomate.domain.post.dto.PostSortType;
 import io.swagger.v3.oas.annotations.Operation;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.MediaType;
@@ -30,5 +32,19 @@ public class PostController {
         return ResponseEntity
                 .created(URI.create("/posts/" + postId))
                 .build();
+    }
+
+    @GetMapping
+    @Operation(summary = "게시글 조회", description = "게시글 조회 API")
+    public ResponseEntity<PostFeedResponseDTO> getPosts(
+            @RequestParam(defaultValue = "LATEST") PostSortType sort,
+            @RequestParam(required = false) String cursorTime,
+            @RequestParam(required = false) Long cursorLike,
+            @RequestParam(required = false) Long cursorId,
+            @RequestParam(defaultValue = "12") int size,
+            @RequestParam(required = false) Long memberId
+    ) {
+        PostFeedResponseDTO response = postService.getFeed(sort, cursorTime, cursorLike, cursorId, size, memberId);
+        return ResponseEntity.ok(response);
     }
 }
