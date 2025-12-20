@@ -28,3 +28,15 @@ spring:
       chat:
         options:
           model: ${OPENAI_MODEL:gpt-4o-mini}
+
+  servlet:
+    multipart:
+      max-file-size: 25MB
+      max-request-size: 25MB
+
+app:
+  cdn:
+    base-url: ${CLOUDFRONT_BASEURL}
+  s3:
+    bucket: ${S3_BUCKET}
+    public-read: true
