@@ -30,16 +30,28 @@ public class Post extends BaseEntity {
     @Column(nullable=false, columnDefinition = "TEXT")
     private String description;
 
-    @Column(length = 2048)
-    private String imageUrl;
+    @Column(nullable = false, length = 512)
+    private String imagePrefix;
+
+    @Column(nullable = false, length = 512)
+    private String originalKey;
 
     @Builder
-    public Post(Member member, String title, String description, String imageUrl) {
+    public Post(Member member, String title, String description, String imagePrefix, String originalKey) {
         this.member = member;
         this.title = title;
         this.description = description;
-        this.imageUrl = imageUrl;
+        this.imagePrefix = imagePrefix;
+        this.originalKey = originalKey;
     }
+
+    public void updateImageKeys(String imagePrefix, String originalKey) {
+        this.imagePrefix = imagePrefix;
+        this.originalKey = originalKey;
+    }
+
+    public String thumbnailKey() { return imagePrefix + "/t.jpg"; }
+    public String previewKey()   { return imagePrefix + "/p.jpg"; }
 
 }
 
