@@ -47,4 +47,3 @@ app:
     base-url: ${CLOUDFRONT_BASEURL}
   s3:
     bucket: ${S3_BUCKET}
-    public-read: true
