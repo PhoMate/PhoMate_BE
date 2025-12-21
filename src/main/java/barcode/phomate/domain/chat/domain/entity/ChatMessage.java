@@ -33,7 +33,7 @@ public class ChatMessage extends BaseEntity {
     private ChatSession chatSession;
 
     @ManyToOne(fetch = FetchType.LAZY)
-    @JoinColumn(name = "parnet_id")
+    @JoinColumn(name = "parent_id")
     @OnDelete(action = OnDeleteAction.CASCADE)
     private ChatMessage parent;
 

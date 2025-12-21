@@ -36,7 +36,7 @@ spring:
           model: gemini-1.5-flash
       image:
         options:
-          model: imagen-3
+          model: gemini-3-pro-image-preview
 
   cloud:
     aws:
