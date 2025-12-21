@@ -1,4 +1,4 @@
-package barcode.phomate.domain.chat.entity;
+package barcode.phomate.domain.chat.domain.entity;
 
 import barcode.phomate.global.common.entity.BaseEntity;
 import jakarta.persistence.Column;
