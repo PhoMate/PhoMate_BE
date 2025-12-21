@@ -63,7 +63,7 @@ public class EditServiceImpl implements EditService{
                 .build());
 
         // 편집 전용 복사본 생성해 jpg로 확장자 두기
-        byte[] baseBytes = downloadBytes(cloudFrontUrl(post.previewKey()));
+        byte[] baseBytes = downloadBytes(cloudFrontUrl(post.getOriginalKey()));
         byte[] baseJpg = toJpgOrThrow(baseBytes);
 
         String key0 = sessionPrefix(session.getId()) + "/vo.jpg";
