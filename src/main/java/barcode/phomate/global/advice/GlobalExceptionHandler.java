@@ -56,5 +56,14 @@ public class GlobalExceptionHandler {
         return problemDetail;
     }
 
+    @ExceptionHandler(InternalServerException.class)
+    public ProblemDetail handleInternalServerException(InternalServerException ex) {
+        log.error("InternalServerException occur: {}", ex.getMessage(), ex);
+        ProblemDetail problemDetail = ProblemDetail.forStatus(HttpStatus.INTERNAL_SERVER_ERROR);
+        problemDetail.setTitle("500_INTERNAL_SERVER_ERROR");
+        problemDetail.setDetail(ex.getMessage());
+        return problemDetail;
+    }
+
 }
 
