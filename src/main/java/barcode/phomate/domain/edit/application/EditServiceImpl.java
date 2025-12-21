@@ -14,7 +14,7 @@ import barcode.phomate.global.exception.BadRequestException;
 import barcode.phomate.global.exception.ForbiddenException;
 import barcode.phomate.global.exception.NotFoundException;
 import barcode.phomate.global.gemini.GeminiImageEditClient;
-import barcode.phomate.global.s3.service.S3StorageService;
+import barcode.phomate.global.s3.application.S3StorageService;
 import barcode.phomate.global.util.ImageJpegUtil;
 import org.springframework.transaction.annotation.Transactional;
 import lombok.RequiredArgsConstructor;
