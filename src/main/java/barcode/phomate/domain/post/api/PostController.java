@@ -47,4 +47,30 @@ public class PostController {
         PostFeedResponseDTO response = postService.getFeed(sort, cursorTime, cursorLike, cursorId, size, memberId);
         return ResponseEntity.ok(response);
     }
+
+    @PatchMapping(
+            value = "/{postId}",
+            consumes = MediaType.MULTIPART_FORM_DATA_VALUE
+    )
+    @Operation(summary = "게시글 수정", description = "게시글 삭제 API, title/description/image 부분 수정 지원. null/공백문자는 미수정")
+    public ResponseEntity<Void> updatePost(
+            @RequestParam("memberId") Long memberId,
+            @PathVariable("postId") Long postId,
+            @ModelAttribute PostCreateRequestDTO request,
+            @RequestPart(value = "image", required = false) MultipartFile image
+    ) {
+        postService.updatePost(memberId, postId, request, image);
+        return ResponseEntity.noContent().build();
+    }
+
+    @DeleteMapping("/{postId}")
+    @Operation(summary = "게시글 삭제", description = "게시글 삭제 API")
+    public ResponseEntity<Void> deletePost(
+            @RequestParam("memberId") Long memberId,
+            @PathVariable("postId") Long postId
+    ) {
+        postService.deletePost(memberId, postId);
+        return ResponseEntity.noContent().build();
+    }
+
 }

@@ -1,10 +1,11 @@
-package barcode.phomate.global.s3.service;
+package barcode.phomate.global.s3.application;
 
 import lombok.RequiredArgsConstructor;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import software.amazon.awssdk.core.sync.RequestBody;
 import software.amazon.awssdk.services.s3.S3Client;
+import software.amazon.awssdk.services.s3.model.DeleteObjectRequest;
 import software.amazon.awssdk.services.s3.model.PutObjectRequest;
 
 @Service
@@ -25,5 +26,14 @@ public class S3StorageService {
                 .build();
 
         s3Client.putObject(req, RequestBody.fromBytes(bytes));
+    }
+
+    public void deleteObject(String key) {
+        if (key == null || key.isBlank() || "TEMP".equals(key)) return;
+
+        s3Client.deleteObject(DeleteObjectRequest.builder()
+                .bucket(bucket)
+                .key(key)
+                .build());
     }
 }

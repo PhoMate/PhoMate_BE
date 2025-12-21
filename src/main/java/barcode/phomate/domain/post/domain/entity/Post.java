@@ -36,22 +36,34 @@ public class Post extends BaseEntity {
     @Column(nullable = false, length = 512)
     private String originalKey;
 
+    @Column(nullable = false, length = 512)
+    private String thumbnailKey;
+
+    @Column(nullable = false, length = 512)
+    private String previewKey;
+
     @Column(nullable = false)
     private long likeCount;
 
     @Builder
-    public Post(Member member, String title, String description, String imagePrefix, String originalKey) {
+    public Post(Member member, String title, String description,
+                String imagePrefix, String originalKey,
+                String thumbnailKey, String previewKey) {
         this.member = member;
         this.title = title;
         this.description = description;
         this.imagePrefix = imagePrefix;
         this.originalKey = originalKey;
+        this.thumbnailKey = thumbnailKey;
+        this.previewKey = previewKey;
         this.likeCount = 0;
     }
 
-    public void updateImageKeys(String imagePrefix, String originalKey) {
+    public void updateImageKeys(String imagePrefix, String originalKey, String thumbnailKey, String previewKey) {
         this.imagePrefix = imagePrefix;
         this.originalKey = originalKey;
+        this.thumbnailKey = thumbnailKey;
+        this.previewKey = previewKey;
     }
 
     public void increaseLikeCount() { this.likeCount++; }
@@ -60,8 +72,13 @@ public class Post extends BaseEntity {
         if (this.likeCount > 0) this.likeCount--;
     }
 
-    public String thumbnailKey() { return imagePrefix + "/t.jpg"; }
-    public String previewKey()   { return imagePrefix + "/p.jpg"; }
+    public void updateText(String title, String description) {
+        this.title = title;
+        this.description = description;
+    }
+
+    public String thumbnailKey() { return thumbnailKey; }
+    public String previewKey()   { return previewKey; }
 
 }
 
