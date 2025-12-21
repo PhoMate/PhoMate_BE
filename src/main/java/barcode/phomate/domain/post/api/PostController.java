@@ -47,4 +47,13 @@ public class PostController {
         PostFeedResponseDTO response = postService.getFeed(sort, cursorTime, cursorLike, cursorId, size, memberId);
         return ResponseEntity.ok(response);
     }
+
+    @DeleteMapping("/{postId}")
+    @Operation(summary = "게시글 삭제", description = "게시글 삭제 API")
+    public ResponseEntity<Void> deletePost(@RequestParam("memberId") Long memberId,
+                                           @PathVariable Long postId) {
+        postService.deletePost(memberId, postId);
+        return ResponseEntity.noContent().build();
+    }
+
 }

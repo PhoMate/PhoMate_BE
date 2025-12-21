@@ -9,13 +9,17 @@ import barcode.phomate.domain.post.dto.PostCreateRequestDTO;
 import barcode.phomate.domain.post.dto.PostFeedResponseDTO;
 import barcode.phomate.domain.post.dto.PostResponseDTO;
 import barcode.phomate.domain.post.dto.PostSortType;
+import barcode.phomate.global.exception.ForbiddenException;
+import barcode.phomate.global.exception.NotFoundException;
 import barcode.phomate.global.fastapi.application.EmbeddingAsyncService;
 import barcode.phomate.global.fastapi.dto.EmbedRequestDTO;
-import barcode.phomate.global.s3.service.S3StorageService;
+import barcode.phomate.global.s3.application.S3DeleteAsyncService;
+import barcode.phomate.global.s3.application.S3StorageService;
 import barcode.phomate.global.tx.AfterCommitExecutor;
 import barcode.phomate.global.util.ImageResizeUtil;
 import barcode.phomate.global.util.ImageTypeUtil;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.stereotype.Service;
@@ -31,6 +35,7 @@ import java.util.Set;
 @Service
 @RequiredArgsConstructor
 @Transactional
+@Slf4j
 public class PostServiceImpl implements PostService {
 
     private final PostRepository postRepository;
@@ -39,6 +44,7 @@ public class PostServiceImpl implements PostService {
     private final S3StorageService s3StorageService;
     private final AfterCommitExecutor afterCommitExecutor;
     private final EmbeddingAsyncService embeddingAsyncService;
+    private final S3DeleteAsyncService s3DeleteAsyncService;
     @Value("${app.cdn.base-url}")
     private String cloudFrontBaseUrl;
     @Override
@@ -157,4 +163,37 @@ public class PostServiceImpl implements PostService {
         return PostFeedResponseDTO.of(items, nextCursor, hasNext);
     }
 
+    @Override
+    public void deletePost(Long memberId, Long postId) {
+
+        Post post = postRepository.findById(postId)
+                .orElseThrow(() -> new NotFoundException("게시글을 찾을 수 없습니다."));
+
+        Long ownerId = post.getMember().getId();
+        if (!ownerId.equals(memberId)) {
+            throw new ForbiddenException("삭제 권한이 없습니다.");
+        }
+
+        final String originalKey = post.getOriginalKey();
+        final String prefix = post.getImagePrefix();
+
+        postRepository.delete(post);
+
+        afterCommitExecutor.run(() -> {
+            try {
+                embeddingAsyncService.deletePostVector(postId);
+            } catch (Exception e) {
+                log.error("[VEC-DEL] enqueue failed postId={} err={}", postId, e.getMessage(), e);
+            }
+
+            try {
+                s3DeleteAsyncService.deletePostImages(postId, originalKey, prefix);
+            } catch (Exception e) {
+                log.error("[S3-DEL] enqueue failed postId={} originalKey={} prefix={} err={}",
+                        postId, originalKey, prefix, e.getMessage(), e);
+            }
+        });
+
+        log.info("[POST-DEL] deleted postId={} memberId={}", postId, memberId);
+    }
 }

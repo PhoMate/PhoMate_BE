@@ -1,7 +1,6 @@
 package barcode.phomate.global.fastapi;
 
 import barcode.phomate.global.fastapi.dto.EmbedRequestDTO;
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.MediaType;
 import org.springframework.stereotype.Component;
 import org.springframework.web.reactive.function.client.WebClient;
@@ -11,10 +10,8 @@ public class EmbeddingWorkerClient {
 
     private final WebClient webClient;
 
-    public EmbeddingWorkerClient(@Value("${embedding-worker.base-url}") String baseUrl) {
-        this.webClient = WebClient.builder()
-                .baseUrl(baseUrl)
-                .build();
+    public EmbeddingWorkerClient(WebClient embeddingWorkerWebClient) {
+        this.webClient = embeddingWorkerWebClient;
     }
 
     public void requestPostEmbedding(EmbedRequestDTO req) {
@@ -27,4 +24,11 @@ public class EmbeddingWorkerClient {
                 .block();
     }
 
+    public void deletePostVector(Long postId) {
+        webClient.delete()
+                .uri("/vectors/posts/{postId}", postId)
+                .retrieve()
+                .toBodilessEntity()
+                .block();
+    }
 }

@@ -60,6 +60,56 @@ public class EmbeddingAsyncService {
         }
     }
 
+
+    @Async("embeddingExecutor")
+    public void deletePostVector(Long postId) {
+        int maxAttempts = 3;
+        long backoffMs = 300;
+
+        for (int attempt = 1; attempt <= maxAttempts; attempt++) {
+            try {
+                embeddingWorkerClient.deletePostVector(postId);
+                log.info("[VEC-DEL] success postId={} attempt={}", postId, attempt);
+                return;
+
+            } catch (WebClientResponseException e) {
+                int status = e.getStatusCode().value();
+
+                if (status == 404) {
+                    log.info("[VEC-DEL] already deleted postId={} (404)", postId);
+                    return;
+                }
+
+                if (status >= 400 && status < 500) {
+                    log.error("[VEC-DEL] failed postId={} 4xx status={} body={}",
+                            postId, status, safeBody(e));
+                    return;
+                }
+
+                log.warn("[VEC-DEL] retryable fail postId={} status={} attempt={}/{}",
+                        postId, status, attempt, maxAttempts, e);
+
+            } catch (Exception e) {
+                log.warn("[VEC-DEL] retryable fail postId={} attempt={}/{} err={}",
+                        postId, attempt, maxAttempts, e.getMessage(), e);
+            }
+
+            if (attempt == maxAttempts) {
+                log.error("[VEC-DEL] permanently failed postId={} after {} attempts",
+                        postId, maxAttempts);
+                return;
+            }
+
+            try {
+                Thread.sleep(backoffMs);
+            } catch (InterruptedException ie) {
+                Thread.currentThread().interrupt();
+                return;
+            }
+            backoffMs *= 2;
+        }
+    }
+
     private String safeBody(WebClientResponseException e) {
         try {
             String body = e.getResponseBodyAsString();
