@@ -13,12 +13,9 @@ public class S3DeleteAsyncService {
     private final S3StorageService s3StorageService;
 
     @Async("embeddingExecutor")
-    public void deletePostImages(Long postId, String originalKey, String prefix) {
+    public void deletePostImages(Long postId, String originalKey, String thumbKey, String previewKey) {
         int maxAttempts = 3;
         long backoffMs = 300;
-
-        String thumbKey = prefix + "/t.jpg";
-        String previewKey = prefix + "/p.jpg";
 
         for (int attempt = 1; attempt <= maxAttempts; attempt++) {
             try {
@@ -39,12 +36,8 @@ public class S3DeleteAsyncService {
                 return;
             }
 
-            try {
-                Thread.sleep(backoffMs);
-            } catch (InterruptedException ie) {
-                Thread.currentThread().interrupt();
-                return;
-            }
+            try { Thread.sleep(backoffMs); }
+            catch (InterruptedException ie) { Thread.currentThread().interrupt(); return; }
             backoffMs *= 2;
         }
     }

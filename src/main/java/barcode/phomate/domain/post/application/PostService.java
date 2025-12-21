@@ -8,5 +8,6 @@ import org.springframework.web.multipart.MultipartFile;
 public interface PostService {
     Long createPost(Long memberId, PostCreateRequestDTO request, MultipartFile image);
     PostFeedResponseDTO getFeed(PostSortType sort, String cursorTime, Long cursorLike, Long cursorId, int size, Long memberId);
+    Long updatePost(Long memberId, Long postId, PostCreateRequestDTO request, MultipartFile image);
     void deletePost(Long memberId, Long postId);
 }

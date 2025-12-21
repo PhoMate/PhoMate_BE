@@ -57,9 +57,13 @@ public class PostServiceImpl implements PostService {
                 .description(request.getDescription())
                 .imagePrefix("TEMP")
                 .originalKey("TEMP")
+                .thumbnailKey("TEMP")
+                .previewKey("TEMP")
                 .build());
 
         String prefix = "posts/" + post.getId();
+
+        long v = System.currentTimeMillis();
 
         String ext = ImageTypeUtil.safeExt(image.getContentType(), image.getOriginalFilename());
         String originalContentType = ImageTypeUtil.normalizeContentType(image.getContentType(), ext);
@@ -71,8 +75,6 @@ public class PostServiceImpl implements PostService {
             throw new IllegalStateException("Failed to read uploaded image bytes.", e);
         }
 
-        String originalKey = prefix + "/o." + ext;
-
         byte[] thumbJpg;
         byte[] previewJpg;
         try {
@@ -82,14 +84,17 @@ public class PostServiceImpl implements PostService {
             throw new IllegalStateException("Failed to decode/resize image.", e);
         }
 
+        String originalKey = prefix + "/o_" + v + "." + ext;
+        String thumbKey    = prefix + "/t_" + v + ".jpg";
+        String previewKey  = prefix + "/p_" + v + ".jpg";
+
         String cache = "public, max-age=31536000";
         s3StorageService.putBytes(originalKey, originalBytes, originalContentType, cache);
-        s3StorageService.putBytes(prefix + "/t.jpg", thumbJpg, "image/jpeg", cache);
-        s3StorageService.putBytes(prefix + "/p.jpg", previewJpg, "image/jpeg", cache);
+        s3StorageService.putBytes(thumbKey, thumbJpg, "image/jpeg", cache);
+        s3StorageService.putBytes(previewKey, previewJpg, "image/jpeg", cache);
 
-        post.updateImageKeys(prefix, originalKey);
+        post.updateImageKeys(prefix, originalKey, thumbKey, previewKey);
 
-        String previewKey = prefix + "/p.jpg";
         String previewUrl = cloudFrontBaseUrl + "/" + previewKey;
 
         Long createdAtMs = post.getCreatedAt()
@@ -106,10 +111,8 @@ public class PostServiceImpl implements PostService {
         );
 
         afterCommitExecutor.run(() -> embeddingAsyncService.embedPost(reqDto));
-
         return post.getId();
     }
-
 
     @Override
     @Transactional(readOnly = true)
@@ -148,7 +151,7 @@ public class PostServiceImpl implements PostService {
                 .map(p -> PostResponseDTO.of(
                         p.getId(),
                         p.getTitle(),
-                        cloudFrontBaseUrl + "/" + p.thumbnailKey(),
+                        cloudFrontBaseUrl + "/" + p.getThumbnailKey(),
                         p.getLikeCount(),
                         likedSet.contains(p.getId())
                 ))
@@ -164,6 +167,89 @@ public class PostServiceImpl implements PostService {
     }
 
     @Override
+    public Long updatePost(Long memberId, Long postId, PostCreateRequestDTO request, MultipartFile image) {
+        Post post = postRepository.findById(postId)
+                .orElseThrow(() -> new NotFoundException("게시글을 찾을 수 없습니다."));
+
+        if (!post.getMember().getId().equals(memberId)) {
+            throw new ForbiddenException("수정 권한이 없습니다.");
+        }
+
+        String newTitle = hasText(request.getTitle()) ? request.getTitle().trim() : post.getTitle();
+        String newDesc  = hasText(request.getDescription()) ? request.getDescription().trim() : post.getDescription();
+        post.updateText(newTitle, newDesc);
+
+        final String oldOriginalKey = post.getOriginalKey();
+        final String oldThumbKey = post.getThumbnailKey();
+        final String oldPreviewKey = post.getPreviewKey();
+
+        final String prefix = "posts/" + post.getId();
+
+        boolean imageChanged = (image != null && !image.isEmpty());
+
+        String newOriginalKey = oldOriginalKey;
+        String newThumbKey = oldThumbKey;
+        String newPreviewKey = oldPreviewKey;
+
+        if (imageChanged) {
+            long v = System.currentTimeMillis();
+
+            String ext = ImageTypeUtil.safeExt(image.getContentType(), image.getOriginalFilename());
+            String originalContentType = ImageTypeUtil.normalizeContentType(image.getContentType(), ext);
+
+            byte[] originalBytes;
+            try {
+                originalBytes = image.getBytes();
+            } catch (IOException e) {
+                throw new IllegalStateException("Failed to read uploaded image bytes.", e);
+            }
+
+            byte[] thumbJpg;
+            byte[] previewJpg;
+            try {
+                thumbJpg = ImageResizeUtil.toJpgResized(originalBytes, 320, 0.82f);
+                previewJpg = ImageResizeUtil.toJpgResized(originalBytes, 1080, 0.85f);
+            } catch (IOException e) {
+                throw new IllegalStateException("Failed to decode/resize image.", e);
+            }
+
+            newOriginalKey = prefix + "/o_" + v + "." + ext;
+            newThumbKey    = prefix + "/t_" + v + ".jpg";
+            newPreviewKey  = prefix + "/p_" + v + ".jpg";
+
+            String cache = "public, max-age=31536000";
+            s3StorageService.putBytes(newOriginalKey, originalBytes, originalContentType, cache);
+            s3StorageService.putBytes(newThumbKey, thumbJpg, "image/jpeg", cache);
+            s3StorageService.putBytes(newPreviewKey, previewJpg, "image/jpeg", cache);
+
+            post.updateImageKeys(prefix, newOriginalKey, newThumbKey, newPreviewKey);
+        }
+
+        final String previewUrl = cloudFrontBaseUrl + "/" + newPreviewKey;
+        final Long createdAtMs = post.getCreatedAt()
+                .atZone(java.time.ZoneId.systemDefault())
+                .toInstant()
+                .toEpochMilli();
+
+        final EmbedRequestDTO reqDto = new EmbedRequestDTO(
+                post.getId(),
+                post.getMember().getId(),
+                previewUrl,
+                newTitle + " " + newDesc,
+                createdAtMs
+        );
+
+        afterCommitExecutor.run(() -> {
+            embeddingAsyncService.embedPost(reqDto);
+            if (imageChanged) {
+                s3DeleteAsyncService.deletePostImages(postId, oldOriginalKey, oldThumbKey, oldPreviewKey);
+            }
+        });
+
+        return post.getId();
+    }
+
+    @Override
     public void deletePost(Long memberId, Long postId) {
 
         Post post = postRepository.findById(postId)
@@ -175,7 +261,8 @@ public class PostServiceImpl implements PostService {
         }
 
         final String originalKey = post.getOriginalKey();
-        final String prefix = post.getImagePrefix();
+        final String thumbKey = post.getThumbnailKey();
+        final String previewKey = post.getPreviewKey();
 
         postRepository.delete(post);
 
@@ -187,13 +274,18 @@ public class PostServiceImpl implements PostService {
             }
 
             try {
-                s3DeleteAsyncService.deletePostImages(postId, originalKey, prefix);
+                s3DeleteAsyncService.deletePostImages(postId, originalKey, thumbKey, previewKey);
             } catch (Exception e) {
-                log.error("[S3-DEL] enqueue failed postId={} originalKey={} prefix={} err={}",
-                        postId, originalKey, prefix, e.getMessage(), e);
+                log.error("[S3-DEL] enqueue failed postId={} originalKey={} thumbKey={} previewKey={} err={}",
+                        postId, originalKey, thumbKey, previewKey, e.getMessage(), e);
             }
         });
 
         log.info("[POST-DEL] deleted postId={} memberId={}", postId, memberId);
+    }
+
+
+    private boolean hasText(String s) {
+        return s != null && !s.trim().isEmpty();
     }
 }
