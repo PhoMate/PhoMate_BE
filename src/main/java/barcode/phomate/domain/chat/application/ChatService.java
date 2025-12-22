@@ -14,4 +14,6 @@ public interface ChatService {
 
     // 텍스트 스트리밍
     Flux<ServerSentEvent<String>> streamText(ChatStreamRequestDTO request);
+
+    Flux<ServerSentEvent<String>> streamSearch(ChatStreamRequestDTO request);
 }

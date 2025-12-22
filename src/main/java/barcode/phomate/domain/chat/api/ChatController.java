@@ -48,4 +48,10 @@ public class ChatController {
     public Flux<ServerSentEvent<String>> streamText(@RequestBody ChatStreamRequestDTO request) {
         return chatService.streamText(request);
     }
+
+    @PostMapping(value = "/search/stream", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
+    @Operation(summary = "검색 텍스트 스트리밍", description = "SSE로 results + delta 반환")
+    public Flux<ServerSentEvent<String>> streamSearch(@RequestBody ChatStreamRequestDTO request) {
+        return chatService.streamSearch(request);
+    }
 }

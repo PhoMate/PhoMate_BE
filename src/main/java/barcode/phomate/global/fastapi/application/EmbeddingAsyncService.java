@@ -1,6 +1,6 @@
 package barcode.phomate.global.fastapi.application;
 
-import barcode.phomate.global.fastapi.EmbeddingWorkerClient;
+import barcode.phomate.global.fastapi.client.EmbeddingWorkerClient;
 import barcode.phomate.global.fastapi.dto.EmbedRequestDTO;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
