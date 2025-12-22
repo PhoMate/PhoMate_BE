@@ -6,6 +6,7 @@ import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.*;
 
 @RestController
@@ -19,7 +20,7 @@ public class LikesController {
     @PostMapping("/posts/{postId}/likes")
     @Operation(summary = "좋아요 토글", description = "좋아요 토글 API")
     public ResponseEntity<LikesToggleResponse> toggleLikes(
-            @RequestParam Long memberId,
+            @AuthenticationPrincipal Long memberId,
             @PathVariable("postId") Long postId) {
         LikesToggleResponse response = likesService.toggleLikes(memberId, postId);
         return ResponseEntity.ok(response);

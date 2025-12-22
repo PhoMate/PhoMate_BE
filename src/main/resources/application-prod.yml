@@ -56,6 +56,18 @@ app:
     base-url: ${CLOUDFRONT_BASEURL}
   s3:
     bucket: ${S3_BUCKET}
+  cors:
+    allowed-origins: ${CORS_ALLOWED_ORIGINS}
 
 embedding-worker:
   base-url: ${FASTAPI_BASEURL}
+
+google:
+  client-id: ${GOOGLE_CLIENT_ID}
+  client-secret: ${GOOGLE_CLIENT_SECRET}
+  token-uri: https://oauth2.googleapis.com/token
+
+jwt:
+  secret: ${JWT_SECRET}
+  access-token-exp-min: 60
+  refresh-token-exp-day: 14
