@@ -5,10 +5,7 @@ import barcode.phomate.domain.member.domain.entity.Member;
 import barcode.phomate.domain.member.domain.repository.MemberRepository;
 import barcode.phomate.domain.post.domain.entity.Post;
 import barcode.phomate.domain.post.domain.repository.PostRepository;
-import barcode.phomate.domain.post.dto.PostCreateRequestDTO;
-import barcode.phomate.domain.post.dto.PostFeedResponseDTO;
-import barcode.phomate.domain.post.dto.PostResponseDTO;
-import barcode.phomate.domain.post.dto.PostSortType;
+import barcode.phomate.domain.post.dto.*;
 import barcode.phomate.global.exception.ForbiddenException;
 import barcode.phomate.global.exception.NotFoundException;
 import barcode.phomate.global.fastapi.application.EmbeddingAsyncService;
@@ -284,6 +281,80 @@ public class PostServiceImpl implements PostService {
         log.info("[POST-DEL] deleted postId={} memberId={}", postId, memberId);
     }
 
+    @Override
+    @Transactional(readOnly = true)
+    public PostFeedResponseDTO getUserFeedLatest(Long authorId,
+                                                 String cursorTime,
+                                                 Long cursorId,
+                                                 int size,
+                                                 Long viewerId) {
+
+        int pageSize = Math.min(Math.max(size, 1), 50);
+        var pageable = PageRequest.of(0, pageSize);
+
+        LocalDateTime time = (cursorTime == null || cursorTime.isBlank())
+                ? null
+                : LocalDateTime.parse(cursorTime);
+
+        List<Post> posts = postRepository.findUserFeedLatest(authorId, time, cursorId, pageable);
+
+        if (posts.isEmpty()) {
+            return PostFeedResponseDTO.empty();
+        }
+
+        List<Long> postIds = posts.stream().map(Post::getId).toList();
+
+        final Set<Long> likedSet =
+                (viewerId == null)
+                        ? Set.of()
+                        : new HashSet<>(likesRepository.findLikedPostIds(viewerId, postIds));
+
+        List<PostResponseDTO> items = posts.stream()
+                .map(p -> PostResponseDTO.of(
+                        p.getId(),
+                        p.getTitle(),
+                        cloudFrontBaseUrl + "/" + p.getThumbnailKey(),
+                        p.getLikeCount(),
+                        likedSet.contains(p.getId())
+                ))
+                .toList();
+
+        Post last = posts.get(posts.size() - 1);
+        PostFeedResponseDTO.Cursor nextCursor =
+                PostFeedResponseDTO.Cursor.latest(last.getCreatedAt().toString(), last.getId());
+
+        boolean hasNext = posts.size() == pageSize;
+        return PostFeedResponseDTO.of(items, nextCursor, hasNext);
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public PostDetailResponseDTO getPostDetail(Long postId, Long memberId) {
+
+        Post post = postRepository.findById(postId).orElseThrow(
+                () -> new NotFoundException("게시글이 존재하지 않습니다.")
+        );
+
+        boolean likedByMe = (memberId != null)
+                && likesRepository.existsByMemberIdAndPostId(memberId, postId);
+
+        String originalUrl = cloudFrontBaseUrl + "/" + post.getOriginalKey();
+
+        Member author = post.getMember();
+
+        return PostDetailResponseDTO.of(
+                post.getId(),
+                author.getId(),
+                author.getNickname(),
+                author.getProfileImageUrl(),
+                post.getTitle(),
+                post.getDescription(),
+                originalUrl,
+                post.getLikeCount(),
+                likedByMe,
+                post.getCreatedAt()
+        );
+    }
 
     private boolean hasText(String s) {
         return s != null && !s.trim().isEmpty();

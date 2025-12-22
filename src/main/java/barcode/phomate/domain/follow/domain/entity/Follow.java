@@ -1,4 +1,4 @@
-package barcode.phomate.domain.follow.entity;
+package barcode.phomate.domain.follow.domain.entity;
 
 import barcode.phomate.domain.member.domain.entity.Member;
 import barcode.phomate.global.common.entity.BaseEntity;

@@ -2,6 +2,7 @@ package barcode.phomate.domain.post.api;
 
 import barcode.phomate.domain.post.application.PostService;
 import barcode.phomate.domain.post.dto.PostCreateRequestDTO;
+import barcode.phomate.domain.post.dto.PostDetailResponseDTO;
 import barcode.phomate.domain.post.dto.PostFeedResponseDTO;
 import barcode.phomate.domain.post.dto.PostSortType;
 import io.swagger.v3.oas.annotations.Operation;
@@ -73,4 +74,26 @@ public class PostController {
         return ResponseEntity.noContent().build();
     }
 
+    @GetMapping("/author/{authorId}")
+    @Operation(summary = "특정 유저가 작성한 게시글 조회", description = "특정 유저가 작성한 게시글 조회 API")
+    public ResponseEntity<PostFeedResponseDTO> getUserPostsLatest(
+            @PathVariable Long authorId,
+            @RequestParam(required = false) String cursorTime,
+            @RequestParam(required = false) Long cursorId,
+            @RequestParam(defaultValue = "12") int size,
+            @RequestParam(required = false) Long viewerId
+    ) {
+        PostFeedResponseDTO response = postService.getUserFeedLatest(authorId, cursorTime, cursorId, size, viewerId);
+        return ResponseEntity.ok(response);
+    }
+
+
+    @GetMapping("/{postId}")
+    @Operation(summary = "게시글 상세 조회", description = "게시글 상세 조회 API")
+    public ResponseEntity<PostDetailResponseDTO> getPostDetail(
+            @PathVariable Long postId,
+            @RequestParam(required = false) Long memberId
+    ) {
+        return ResponseEntity.ok(postService.getPostDetail(postId, memberId));
+    }
 }

@@ -53,4 +53,19 @@ public interface PostRepository extends JpaRepository<Post, Long> {
 
     @Query("select p.likeCount from Post p where p.id = :postId")
     long findLikeCount(@Param("postId") Long postId);
+
+    @Query("""
+    select p
+    from Post p
+    where p.member.id = :memberId
+      and (:cursorTime is null or p.createdAt < :cursorTime
+           or (p.createdAt = :cursorTime and p.id < :cursorId))
+    order by p.createdAt desc, p.id desc
+    """)
+    List<Post> findUserFeedLatest(
+            @Param("memberId") Long memberId,
+            @Param("cursorTime") LocalDateTime cursorTime,
+            @Param("cursorId") Long cursorId,
+            Pageable pageable
+    );
 }
