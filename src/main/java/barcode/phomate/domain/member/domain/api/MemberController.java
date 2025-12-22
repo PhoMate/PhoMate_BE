@@ -26,7 +26,7 @@ public class MemberController {
         return ResponseEntity.ok(memberService.getMember(memberId));
     }
 
-    @GetMapping("/members/me")
+    @GetMapping("/me")
     @Operation(summary = "내 정보 조회", description = "내 정보 조회 API")
     public ResponseEntity<MemberResponseDTO> getSelf(@AuthenticationPrincipal Long memberId) {
         MemberResponseDTO response = memberService.getMember(memberId);
