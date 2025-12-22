@@ -1,6 +1,7 @@
 package barcode.phomate.domain.chat.api;
 
 import barcode.phomate.domain.chat.application.ChatService;
+import barcode.phomate.domain.chat.dto.ChatSearchStreamRequestDTO;
 import barcode.phomate.domain.chat.dto.ChatSendResponseDTO;
 import barcode.phomate.domain.chat.dto.ChatStreamRequestDTO;
 import io.swagger.v3.oas.annotations.Operation;
@@ -51,7 +52,8 @@ public class ChatController {
 
     @PostMapping(value = "/search/stream", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
     @Operation(summary = "검색 텍스트 스트리밍", description = "SSE로 results + delta 반환")
-    public Flux<ServerSentEvent<String>> streamSearch(@RequestBody ChatStreamRequestDTO request) {
-        return chatService.streamSearch(request);
+    public Flux<ServerSentEvent<String>> streamSearch(@RequestParam Long memberId,
+                                                      @RequestBody ChatSearchStreamRequestDTO request) {
+        return chatService.streamSearch(memberId, request);
     }
 }

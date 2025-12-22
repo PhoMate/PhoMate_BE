@@ -4,6 +4,7 @@ import barcode.phomate.domain.chat.domain.entity.ChatMessage;
 import barcode.phomate.domain.chat.domain.entity.ChatSession;
 import barcode.phomate.domain.chat.domain.repository.ChatMessageRepository;
 import barcode.phomate.domain.chat.domain.repository.ChatSessionRepository;
+import barcode.phomate.domain.chat.dto.ChatSearchStreamRequestDTO;
 import barcode.phomate.domain.chat.dto.ChatSendResponseDTO;
 import barcode.phomate.domain.chat.dto.ChatStreamRequestDTO;
 import barcode.phomate.domain.edit.application.EditService;
@@ -314,14 +315,14 @@ public class ChatServiceImpl implements ChatService {
     }
 
     @Override
-    public Flux<ServerSentEvent<String>> streamSearch(ChatStreamRequestDTO request) {
+    public Flux<ServerSentEvent<String>> streamSearch(Long memberId, ChatSearchStreamRequestDTO request) {
 
         return Mono.fromCallable(() -> {
 
                     ChatSession session = chatSessionRepository.findById(request.getChatSessionId())
                             .orElseThrow(() -> new NotFoundException("세션을 찾을 수 없습니다."));
 
-                    if (!session.getMember().getId().equals(request.getMemberId())) {
+                    if (!session.getMember().getId().equals(memberId)) {
                         throw new ForbiddenException("권한이 없습니다.");
                     }
 
