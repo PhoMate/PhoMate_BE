@@ -9,6 +9,7 @@ import io.swagger.v3.oas.annotations.Operation;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.multipart.MultipartFile;
 import java.net.URI;
@@ -25,7 +26,7 @@ public class PostController {
     )
     @Operation(summary = "게시글 등록", description = "게시글 등록 API")
     public ResponseEntity<Void> createPost(
-            @RequestParam("memberId") Long memberId,
+            @AuthenticationPrincipal Long memberId,
             @ModelAttribute PostCreateRequestDTO request,
             @RequestPart(value = "image") MultipartFile image
     ) {
@@ -43,7 +44,7 @@ public class PostController {
             @RequestParam(required = false) Long cursorLike,
             @RequestParam(required = false) Long cursorId,
             @RequestParam(defaultValue = "12") int size,
-            @RequestParam(required = false) Long memberId
+            @AuthenticationPrincipal Long memberId
     ) {
         PostFeedResponseDTO response = postService.getFeed(sort, cursorTime, cursorLike, cursorId, size, memberId);
         return ResponseEntity.ok(response);
@@ -55,7 +56,7 @@ public class PostController {
     )
     @Operation(summary = "게시글 수정", description = "게시글 삭제 API, title/description/image 부분 수정 지원. null/공백문자는 미수정")
     public ResponseEntity<Void> updatePost(
-            @RequestParam("memberId") Long memberId,
+            @AuthenticationPrincipal Long memberId,
             @PathVariable("postId") Long postId,
             @ModelAttribute PostCreateRequestDTO request,
             @RequestPart(value = "image", required = false) MultipartFile image
@@ -67,7 +68,7 @@ public class PostController {
     @DeleteMapping("/{postId}")
     @Operation(summary = "게시글 삭제", description = "게시글 삭제 API")
     public ResponseEntity<Void> deletePost(
-            @RequestParam("memberId") Long memberId,
+            @AuthenticationPrincipal Long memberId,
             @PathVariable("postId") Long postId
     ) {
         postService.deletePost(memberId, postId);
@@ -81,7 +82,7 @@ public class PostController {
             @RequestParam(required = false) String cursorTime,
             @RequestParam(required = false) Long cursorId,
             @RequestParam(defaultValue = "12") int size,
-            @RequestParam(required = false) Long viewerId
+            @AuthenticationPrincipal Long viewerId
     ) {
         PostFeedResponseDTO response = postService.getUserFeedLatest(authorId, cursorTime, cursorId, size, viewerId);
         return ResponseEntity.ok(response);
@@ -92,7 +93,7 @@ public class PostController {
     @Operation(summary = "게시글 상세 조회", description = "게시글 상세 조회 API")
     public ResponseEntity<PostDetailResponseDTO> getPostDetail(
             @PathVariable Long postId,
-            @RequestParam(required = false) Long memberId
+            @AuthenticationPrincipal Long memberId
     ) {
         return ResponseEntity.ok(postService.getPostDetail(postId, memberId));
     }

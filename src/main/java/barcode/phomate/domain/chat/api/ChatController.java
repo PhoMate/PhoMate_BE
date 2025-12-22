@@ -9,6 +9,7 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.http.codec.ServerSentEvent;
+import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
@@ -26,7 +27,7 @@ public class ChatController {
     @PostMapping("/sessions/start")
     @Operation(summary = "채팅 세션 생성", description = "수정 챗봇 대화 세션(ChatSession)을 생성합니다.")
     public ResponseEntity<Long> startSession(
-            @RequestParam Long memberId
+            @AuthenticationPrincipal Long memberId
     ) {
         return ResponseEntity.ok(chatService.startSession(memberId));
     }
@@ -34,7 +35,7 @@ public class ChatController {
     @PostMapping("/send-edit")
     @Operation(summary = "수정 챗봇 메시지 전송", description = "사용자 메시지를 저장하고, 편집을 수행한 뒤 editedUrl을 반환합니다.")
     public ResponseEntity<ChatSendResponseDTO> sendEdit(
-            @RequestParam Long memberId,
+            @AuthenticationPrincipal Long memberId,
             @RequestParam Long chatSessionId,
             @RequestParam Long editSessionId,
             @RequestParam String userText
@@ -52,7 +53,7 @@ public class ChatController {
 
     @PostMapping(value = "/search/stream", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
     @Operation(summary = "검색 텍스트 스트리밍", description = "SSE로 results + delta 반환")
-    public Flux<ServerSentEvent<String>> streamSearch(@RequestParam Long memberId,
+    public Flux<ServerSentEvent<String>> streamSearch(@AuthenticationPrincipal Long memberId,
                                                       @RequestBody ChatSearchStreamRequestDTO request) {
         return chatService.streamSearch(memberId, request);
     }

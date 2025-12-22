@@ -6,6 +6,7 @@ import barcode.phomate.domain.follow.dto.FolloweeResponseDTO;
 import io.swagger.v3.oas.annotations.Operation;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
@@ -20,7 +21,7 @@ public class FollowController {
     @PostMapping("/toggle")
     @Operation(summary = "팔로우 토글", description = "팔로우 토글 API")
     public ResponseEntity<FollowToggleResponseDTO> toggleFollow(
-            @RequestParam Long followerId,
+            @AuthenticationPrincipal Long followerId,
             @RequestParam Long followeeId
     ) {
         return ResponseEntity.ok(followService.toggleFollow(followerId, followeeId));
@@ -28,7 +29,7 @@ public class FollowController {
 
     @GetMapping("/me")
     @Operation(summary = "팔로우 목록 조회", description = "팔로우 목록 조회 API")
-    public ResponseEntity<List<FolloweeResponseDTO>> myFollowees(@RequestParam Long followerId) {
+    public ResponseEntity<List<FolloweeResponseDTO>> myFollowees(@AuthenticationPrincipal Long followerId) {
         return ResponseEntity.ok(followService.getMyFollowees(followerId));
     }
 }
