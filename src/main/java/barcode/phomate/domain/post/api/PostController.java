@@ -2,6 +2,7 @@ package barcode.phomate.domain.post.api;
 
 import barcode.phomate.domain.post.application.PostService;
 import barcode.phomate.domain.post.dto.PostCreateRequestDTO;
+import barcode.phomate.domain.post.dto.PostDetailResponseDTO;
 import barcode.phomate.domain.post.dto.PostFeedResponseDTO;
 import barcode.phomate.domain.post.dto.PostSortType;
 import io.swagger.v3.oas.annotations.Operation;
@@ -86,4 +87,13 @@ public class PostController {
         return ResponseEntity.ok(response);
     }
 
+
+    @GetMapping("/{postId}")
+    @Operation(summary = "게시글 상세 조회", description = "게시글 상세 조회 API")
+    public ResponseEntity<PostDetailResponseDTO> getPostDetail(
+            @PathVariable Long postId,
+            @RequestParam(required = false) Long memberId
+    ) {
+        return ResponseEntity.ok(postService.getPostDetail(postId, memberId));
+    }
 }

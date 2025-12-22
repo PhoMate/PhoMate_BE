@@ -5,10 +5,7 @@ import barcode.phomate.domain.member.domain.entity.Member;
 import barcode.phomate.domain.member.domain.repository.MemberRepository;
 import barcode.phomate.domain.post.domain.entity.Post;
 import barcode.phomate.domain.post.domain.repository.PostRepository;
-import barcode.phomate.domain.post.dto.PostCreateRequestDTO;
-import barcode.phomate.domain.post.dto.PostFeedResponseDTO;
-import barcode.phomate.domain.post.dto.PostResponseDTO;
-import barcode.phomate.domain.post.dto.PostSortType;
+import barcode.phomate.domain.post.dto.*;
 import barcode.phomate.global.exception.ForbiddenException;
 import barcode.phomate.global.exception.NotFoundException;
 import barcode.phomate.global.fastapi.application.EmbeddingAsyncService;
@@ -330,8 +327,34 @@ public class PostServiceImpl implements PostService {
         return PostFeedResponseDTO.of(items, nextCursor, hasNext);
     }
 
+    @Override
+    @Transactional(readOnly = true)
+    public PostDetailResponseDTO getPostDetail(Long postId, Long memberId) {
 
+        Post post = postRepository.findById(postId).orElseThrow(
+                () -> new NotFoundException("게시글이 존재하지 않습니다.")
+        );
 
+        boolean likedByMe = (memberId != null)
+                && likesRepository.existsByMemberIdAndPostId(memberId, postId);
+
+        String originalUrl = cloudFrontBaseUrl + "/" + post.getOriginalKey();
+
+        Member author = post.getMember();
+
+        return PostDetailResponseDTO.of(
+                post.getId(),
+                author.getId(),
+                author.getNickname(),
+                author.getProfileImageUrl(),
+                post.getTitle(),
+                post.getDescription(),
+                originalUrl,
+                post.getLikeCount(),
+                likedByMe,
+                post.getCreatedAt()
+        );
+    }
 
     private boolean hasText(String s) {
         return s != null && !s.trim().isEmpty();

@@ -1,6 +1,7 @@
 package barcode.phomate.domain.post.application;
 
 import barcode.phomate.domain.post.dto.PostCreateRequestDTO;
+import barcode.phomate.domain.post.dto.PostDetailResponseDTO;
 import barcode.phomate.domain.post.dto.PostFeedResponseDTO;
 import barcode.phomate.domain.post.dto.PostSortType;
 import org.springframework.web.multipart.MultipartFile;
@@ -12,4 +13,5 @@ public interface PostService {
     void deletePost(Long memberId, Long postId);
 
     PostFeedResponseDTO getUserFeedLatest(Long authorId, String cursorTime, Long cursorId, int size, Long viewerId);
+    PostDetailResponseDTO getPostDetail(Long postId, Long memberId);
 }
