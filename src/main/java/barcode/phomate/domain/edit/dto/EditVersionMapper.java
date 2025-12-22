@@ -6,14 +6,14 @@ public class EditVersionMapper {
 
     private EditVersionMapper() {}
 
-    public static EditVersionResponseDTO toDto(EditVersion v, String cloudFrontBaseUrl) {
-        EditVersionResponseDTO dto = new EditVersionResponseDTO();
-        dto.setEditSessionId(v.getEditSession().getId());
-        dto.setEditVersionId(v.getId());
-        dto.setVersionIndex(v.getVersionIndex());
-        dto.setS3Key(v.getS3Key());
-        dto.setImageUrl(cloudFrontBaseUrl + "/" + v.getS3Key());
-        dto.setSourceType(v.getSourceType().name());
-        return dto;
+    public static EditVersionResponseDTO toDto(EditVersion version, String cloudFrontBaseUrl) {
+        EditVersionResponseDTO response = new EditVersionResponseDTO();
+        response.setEditSessionId(version.getEditSession().getId());
+        response.setEditVersionId(version.getId());
+        response.setVersionIndex(version.getVersionIndex());
+        response.setS3Key(version.getS3Key());
+        response.setImageUrl(cloudFrontBaseUrl + "/" + version.getS3Key());
+        response.setSourceType(version.getSourceType().name());
+        return response;
     }
 }
