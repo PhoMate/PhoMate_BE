@@ -66,12 +66,6 @@ public class Post extends BaseEntity {
         this.previewKey = previewKey;
     }
 
-    public void increaseLikeCount() { this.likeCount++; }
-
-    public void decreaseLikeCount() {
-        if (this.likeCount > 0) this.likeCount--;
-    }
-
     public void updateText(String title, String description) {
         this.title = title;
         this.description = description;

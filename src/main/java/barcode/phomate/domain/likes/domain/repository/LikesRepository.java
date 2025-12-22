@@ -8,6 +8,11 @@ import org.springframework.data.repository.query.Param;
 import java.util.List;
 
 public interface LikesRepository extends JpaRepository<Likes, Long> {
+
+    boolean existsByMemberIdAndPostId(Long memberId, Long postId);
+
+    void deleteByMemberIdAndPostId(Long memberId, Long postId);
+
     @Query("""
         select l.post.id
         from Likes l
@@ -17,3 +22,4 @@ public interface LikesRepository extends JpaRepository<Likes, Long> {
     List<Long> findLikedPostIds(@Param("memberId") Long memberId,
                                 @Param("postIds") List<Long> postIds);
 }
+
