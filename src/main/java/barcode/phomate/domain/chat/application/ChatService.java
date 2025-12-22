@@ -1,5 +1,6 @@
 package barcode.phomate.domain.chat.application;
 
+import barcode.phomate.domain.chat.dto.ChatSearchStreamRequestDTO;
 import barcode.phomate.domain.chat.dto.ChatSendResponseDTO;
 import barcode.phomate.domain.chat.dto.ChatStreamRequestDTO;
 import org.springframework.http.codec.ServerSentEvent;
@@ -14,4 +15,6 @@ public interface ChatService {
 
     // 텍스트 스트리밍
     Flux<ServerSentEvent<String>> streamText(ChatStreamRequestDTO request);
+
+    Flux<ServerSentEvent<String>> streamSearch(Long memberId, ChatSearchStreamRequestDTO request);
 }

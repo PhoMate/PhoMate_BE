@@ -68,4 +68,6 @@ public interface PostRepository extends JpaRepository<Post, Long> {
             @Param("cursorId") Long cursorId,
             Pageable pageable
     );
+
+    List<Post> findByIdIn(List<Long> ids);
 }

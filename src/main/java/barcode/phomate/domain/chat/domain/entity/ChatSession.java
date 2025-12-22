@@ -2,14 +2,7 @@ package barcode.phomate.domain.chat.domain.entity;
 
 import barcode.phomate.domain.member.domain.entity.Member;
 import barcode.phomate.global.common.entity.BaseEntity;
-import jakarta.persistence.Entity;
-import jakarta.persistence.FetchType;
-import jakarta.persistence.GeneratedValue;
-import jakarta.persistence.GenerationType;
-import jakarta.persistence.Id;
-import jakarta.persistence.JoinColumn;
-import jakarta.persistence.ManyToOne;
-import jakarta.persistence.Table;
+import jakarta.persistence.*;
 import lombok.AccessLevel;
 import lombok.Builder;
 import lombok.Getter;
@@ -32,8 +25,15 @@ public class ChatSession extends BaseEntity {
     @OnDelete(action = OnDeleteAction.CASCADE)
     private Member member;
 
+    @Column(length = 2048)
+    private String currentSearchQuery;
+
     @Builder
     public ChatSession(Member member) {
         this.member = member;
+    }
+
+    public void updateSearchQuery(String query) {
+        this.currentSearchQuery = query;
     }
 }

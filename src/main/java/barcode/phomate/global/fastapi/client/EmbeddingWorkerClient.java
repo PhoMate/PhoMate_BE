@@ -1,4 +1,4 @@
-package barcode.phomate.global.fastapi;
+package barcode.phomate.global.fastapi.client;
 
 import barcode.phomate.global.fastapi.dto.EmbedRequestDTO;
 import org.springframework.http.MediaType;

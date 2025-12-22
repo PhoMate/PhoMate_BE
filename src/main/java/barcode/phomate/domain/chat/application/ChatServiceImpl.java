@@ -4,14 +4,21 @@ import barcode.phomate.domain.chat.domain.entity.ChatMessage;
 import barcode.phomate.domain.chat.domain.entity.ChatSession;
 import barcode.phomate.domain.chat.domain.repository.ChatMessageRepository;
 import barcode.phomate.domain.chat.domain.repository.ChatSessionRepository;
+import barcode.phomate.domain.chat.dto.ChatSearchStreamRequestDTO;
 import barcode.phomate.domain.chat.dto.ChatSendResponseDTO;
 import barcode.phomate.domain.chat.dto.ChatStreamRequestDTO;
 import barcode.phomate.domain.edit.application.EditService;
 import barcode.phomate.domain.edit.domain.entity.EditVersion;
 import barcode.phomate.domain.member.domain.entity.Member;
 import barcode.phomate.domain.member.domain.repository.MemberRepository;
+import barcode.phomate.domain.post.domain.entity.Post;
+import barcode.phomate.domain.post.domain.repository.PostRepository;
+import barcode.phomate.domain.post.dto.PostResponseDTO;
 import barcode.phomate.global.exception.ForbiddenException;
 import barcode.phomate.global.exception.NotFoundException;
+import barcode.phomate.global.fastapi.client.SearchWorkerClient;
+import barcode.phomate.global.fastapi.dto.SearchResponseDTO;
+import barcode.phomate.global.fastapi.dto.TextSearchRequestDTO;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.RequiredArgsConstructor;
@@ -27,7 +34,9 @@ import reactor.core.scheduler.Schedulers;
 
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.stream.Collectors;
 
 @Service
 @RequiredArgsConstructor
@@ -39,6 +48,11 @@ public class ChatServiceImpl implements ChatService {
     private final MemberRepository memberRepository;
     private final EditService editService;
     private final WebClient openAiWebClient;
+    private final SearchWorkerClient searchWorkerClient;
+    private final PostRepository postRepository;
+
+    private static final int SEARCH_TOP_K = 50;
+
     private final ObjectMapper mapper = new ObjectMapper();
 
     @Value("${app.openai.model:gpt-4o-mini}")
@@ -298,6 +312,305 @@ public class ChatServiceImpl implements ChatService {
 
         // data:가 붙어 오면 data: 제거하고 공백까지 제거 -> 반환
         return trimmed.substring(5).trim();
+    }
+
+    @Override
+    public Flux<ServerSentEvent<String>> streamSearch(Long memberId, ChatSearchStreamRequestDTO request) {
+
+        return Mono.fromCallable(() -> {
+
+                    ChatSession session = chatSessionRepository.findById(request.getChatSessionId())
+                            .orElseThrow(() -> new NotFoundException("세션을 찾을 수 없습니다."));
+
+                    if (!session.getMember().getId().equals(memberId)) {
+                        throw new ForbiddenException("권한이 없습니다.");
+                    }
+
+                    ChatMessage userMsg = chatMessageRepository.save(ChatMessage.builder()
+                            .chatSession(session)
+                            .parent(null)
+                            .content(request.getUserText())
+                            .build());
+
+                    return new VerifiedContext(session, userMsg);
+                })
+                .subscribeOn(Schedulers.boundedElastic())
+                .flatMapMany(ctx -> {
+
+                    ChatSession session = ctx.session();
+                    ChatMessage userMsg = ctx.userMsg();
+
+                    // LLM: query planner
+                    Mono<SearchPlan> planMono = openAiWebClient.post()
+                            .uri("/chat/completions")
+                            .contentType(MediaType.APPLICATION_JSON)
+                            .bodyValue(Map.of(
+                                    "model", openAiModel,
+                                    "stream", false,
+                                    "messages", List.of(
+                                            Map.of("role", "system", "content", buildQueryPlannerPrompt()),
+                                            Map.of(
+                                                    "role", "user",
+                                                    "content", buildQueryPlannerUserInput(
+                                                            session.getCurrentSearchQuery(),
+                                                            request.getUserText()
+                                                    )
+                                            )
+                                    )
+                            ))
+                            .retrieve()
+                            .bodyToMono(String.class)
+                            .map(this::extractAssistantContentFromChatCompletionsJson)
+                            .map(this::parseSearchPlanJsonSafely);
+
+
+                    // FastAPI: vector search (동기이므로 boundedElastic에서)
+                    Mono<SearchContext> searchCtxMono = planMono
+                            .publishOn(Schedulers.boundedElastic())
+                            .map(plan -> {
+
+                                String newQuery = plan.query();
+
+                                // 검색 상태 갱신
+                                session.updateSearchQuery(newQuery);
+                                chatSessionRepository.save(session);
+
+                                TextSearchRequestDTO reqDto = new TextSearchRequestDTO(
+                                        newQuery,
+                                        SEARCH_TOP_K,
+                                        null,
+                                        null,
+                                        null
+                                );
+
+                                SearchResponseDTO sr = searchWorkerClient.searchText(reqDto);
+
+                                List<Long> orderedIds = (sr == null || sr.hits() == null)
+                                        ? List.of()
+                                        : sr.hits().stream().map(h -> h.postId()).filter(Objects::nonNull).toList();
+
+                                List<PostResponseDTO> items = toThumbFeedByOrderedIds(orderedIds);
+
+                                return new SearchContext(plan, items);
+                            });
+
+
+                    // SSE: results 1번 먼저 보내기
+                    Flux<ServerSentEvent<String>> resultsEventFlux = searchCtxMono.flatMapMany(sc -> {
+                        String payloadJson = toJsonSafely(Map.of("items", sc.items()));
+                        return Flux.just(
+                                ServerSentEvent.<String>builder()
+                                        .event("results")
+                                        .data(payloadJson)
+                                        .build()
+                        );
+                    });
+
+                    // LLM: reason streaming (delta)
+                    Flux<ServerSentEvent<String>> reasonDeltaFlux = searchCtxMono.flatMapMany(sc -> {
+
+                        List<String> topTitles = sc.items().stream()
+                                .limit(5)
+                                .map(PostResponseDTO::getTitle)
+                                .filter(t -> t != null && !t.isBlank())
+                                .toList();
+
+                        String reasonSystem = buildReasonSystemPrompt();
+                        String reasonUser = buildReasonUserPrompt(request.getUserText(), sc.plan().query(), topTitles);
+
+                        StringBuilder assistantAcc = new StringBuilder();
+                        AtomicInteger deltaCount = new AtomicInteger(0);
+
+                        Flux<String> textFlux =
+                                openAiWebClient.post()
+                                        .uri("/chat/completions")
+                                        .contentType(MediaType.APPLICATION_JSON)
+                                        .accept(MediaType.TEXT_EVENT_STREAM)
+                                        .bodyValue(Map.of(
+                                                "model", openAiModel,
+                                                "stream", true,
+                                                "messages", List.of(
+                                                        Map.of("role", "system", "content", reasonSystem),
+                                                        Map.of("role", "user", "content", reasonUser)
+                                                )
+                                        ))
+                                        .retrieve()
+                                        .bodyToFlux(String.class)
+                                        .flatMap(raw -> Flux.fromArray(raw.split("\n")))
+                                        .map(String::trim)
+                                        .filter(line -> !line.isBlank())
+                                        .map(this::normalizeOpenAiStreamPayload)
+                                        .filter(data -> data != null && !data.isBlank())
+                                        .filter(data -> !data.equals("[DONE]"))
+                                        .map(this::readTreeSafely)
+                                        .filter(n -> !n.isMissingNode())
+                                        .handle((node, sink) -> {
+                                            JsonNode delta = node.path("choices").path(0).path("delta");
+                                            JsonNode contentNode = delta.path("content");
+                                            if (contentNode.isTextual()) {
+                                                String text = contentNode.asText();
+                                                if (text != null && !text.isEmpty()) sink.next(text);
+                                            }
+                                        })
+                                        .cast(String.class)
+                                        .doOnNext(t -> deltaCount.incrementAndGet());
+
+                        // delta -> SSE + 누적
+                        return textFlux
+                                .map(t -> {
+                                    assistantAcc.append(t);
+                                    return ServerSentEvent.<String>builder().event("delta").data(t).build();
+                                })
+                                .doFinally(sig -> {
+                                    // reason 저장 (assistant message)
+                                    if (assistantAcc.length() == 0) return;
+
+                                    Schedulers.boundedElastic().schedule(() -> {
+                                        try {
+                                            chatMessageRepository.save(ChatMessage.builder()
+                                                    .chatSession(session)
+                                                    .parent(userMsg)
+                                                    .content(assistantAcc.toString())
+                                                    .build());
+                                            log.info("[SEARCH ASSIST SAVED] sessionId={} userMsgId={} accLen={} deltaCount={} sig={}",
+                                                    session.getId(), userMsg.getId(), assistantAcc.length(), deltaCount.get(), sig);
+                                        } catch (Exception e) {
+                                            log.error("[SEARCH ASSIST SAVE FAIL] sessionId={} userMsgId={}",
+                                                    session.getId(), userMsg.getId(), e);
+                                        }
+                                    });
+                                });
+                    });
+
+                    // 전체 SSE 조립: results -> delta 스트림 -> done
+                    return Flux.concat(
+                                    resultsEventFlux,
+                                    reasonDeltaFlux,
+                                    Flux.just(ServerSentEvent.<String>builder().event("done").data("ok").build())
+                            )
+                            .onErrorResume(e -> {
+                                log.error("[SEARCH STREAM ERROR] sessionId={} userMsgId={}",
+                                        session.getId(), userMsg.getId(), e);
+                                return Flux.just(
+                                        ServerSentEvent.<String>builder().event("error").data("stream_failed").build(),
+                                        ServerSentEvent.<String>builder().event("done").data("ok").build()
+                                );
+                            });
+                });
+    }
+
+    private record SearchPlan(String query) {}
+
+    private record SearchContext(SearchPlan plan, List<PostResponseDTO> items) {}
+
+    private String buildQueryPlannerPrompt() {
+        return """
+너는 사진 검색 서비스의 검색 상태 업데이트기다.
+
+역할:
+- 이전 검색 상태가 주어지면 그것을 참고하고
+- 사용자의 새 요청을 반영한 "최신 검색 쿼리(query)" 하나만 만들어라.
+
+출력은 반드시 JSON만:
+{"query":"..."}
+
+규칙:
+- query는 벡터 검색에 적합한 핵심 키워드 중심 문장
+- 이전 검색 상태가 무의미하면 새로 만들어도 된다
+- 숫자, 설명, 문장은 출력하지 마라
+""";
+    }
+
+
+
+    private String buildReasonSystemPrompt() {
+        return """
+너는 사진 검색 챗봇이다.
+사용자 요청과 실제 검색 결과(요약)를 바탕으로,
+왜 이 결과들이 나왔는지 3~6문장으로 친절하게 설명해라.
+불필요한 내용은 줄이고, 사용자가 다음에 무엇을 더 말하면 검색이 더 좋아지는지 마지막 문장에 제안해라.
+""";
+    }
+
+    private String buildReasonUserPrompt(String userText, String query, List<String> topTitles) {
+        String titlesBlock = topTitles.isEmpty()
+                ? "(제목 정보 없음)"
+                : String.join("\n- ", topTitles);
+
+        return """
+[사용자 요청]
+""" + userText + """
+
+[생성한 검색 쿼리]
+""" + query + """
+
+[검색 결과 요약(상위 결과 제목)]
+- """ + titlesBlock + """
+""";
+    }
+
+    private List<PostResponseDTO> toThumbFeedByOrderedIds(List<Long> orderedPostIds) {
+        if (orderedPostIds == null || orderedPostIds.isEmpty()) return List.of();
+
+        List<Post> posts = postRepository.findByIdIn(orderedPostIds);
+        Map<Long, Post> byId = posts.stream().collect(Collectors.toMap(Post::getId, p -> p));
+
+        return orderedPostIds.stream()
+                .map(byId::get)
+                .filter(Objects::nonNull)
+                .map(p -> PostResponseDTO.of(
+                        p.getId(),
+                        p.getTitle(),
+                        cloudFrontBaseUrl + "/" + p.getThumbnailKey(),
+                        p.getLikeCount(),
+                        false
+                ))
+                .toList();
+    }
+
+    private String buildQueryPlannerUserInput(String currentQuery, String userText) {
+
+        if (currentQuery == null || currentQuery.isBlank()) {
+            return """
+[사용자 요청]
+""" + userText;
+        }
+
+        return """
+[이전 검색 상태]
+""" + currentQuery + """
+
+[사용자 추가 요청]
+""" + userText;
+    }
+
+
+    private String extractAssistantContentFromChatCompletionsJson(String json) {
+        try {
+            JsonNode root = mapper.readTree(json);
+            return root.path("choices").path(0).path("message").path("content").asText("");
+        } catch (Exception e) {
+            return "";
+        }
+    }
+
+    private SearchPlan parseSearchPlanJsonSafely(String content) {
+        try {
+            JsonNode n = mapper.readTree(content);
+            String q = n.path("query").asText("").trim();
+            if (q.isBlank()) q = "";
+            return new SearchPlan(q);
+        } catch (Exception e) {
+            return new SearchPlan(content == null ? "" : content.trim());
+        }
+    }
+
+    private String toJsonSafely(Object obj) {
+        try {
+            return mapper.writeValueAsString(obj);
+        } catch (Exception e) {
+            return "{}";
+        }
     }
 
 }
