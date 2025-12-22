@@ -27,7 +27,7 @@ public class ChatController {
     public ResponseEntity<Long> startSession(
             @RequestParam Long memberId
     ) {
-        return ResponseEntity.ok(chatService.startChatSession(memberId));
+        return ResponseEntity.ok(chatService.startSession(memberId));
     }
 
     @PostMapping("/send-edit")
@@ -39,13 +39,13 @@ public class ChatController {
             @RequestParam String userText
     ) {
         return ResponseEntity.ok(
-                chatService.sendEditMessage(memberId, chatSessionId, editSessionId, userText)
+                chatService.sendEdit(memberId, chatSessionId, editSessionId, userText)
         );
     }
 
     @PostMapping(value = "/stream", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
     @Operation(summary = "텍스트 스트리밍", description = "SSE로 delta 반환")
-    public Flux<ServerSentEvent<String>> stream(@RequestBody ChatStreamRequestDTO request) {
+    public Flux<ServerSentEvent<String>> streamText(@RequestBody ChatStreamRequestDTO request) {
         return chatService.streamText(request);
     }
 }

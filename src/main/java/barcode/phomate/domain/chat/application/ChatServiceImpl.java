@@ -5,6 +5,7 @@ import barcode.phomate.domain.chat.domain.entity.ChatSession;
 import barcode.phomate.domain.chat.domain.repository.ChatMessageRepository;
 import barcode.phomate.domain.chat.domain.repository.ChatSessionRepository;
 import barcode.phomate.domain.chat.dto.ChatSendResponseDTO;
+import barcode.phomate.domain.chat.dto.ChatStreamRequestDTO;
 import barcode.phomate.domain.edit.application.EditService;
 import barcode.phomate.domain.edit.domain.entity.EditVersion;
 import barcode.phomate.domain.member.domain.entity.Member;
@@ -13,7 +14,9 @@ import barcode.phomate.global.exception.NotFoundException;
 import jakarta.transaction.Transactional;
 import lombok.RequiredArgsConstructor;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.http.codec.ServerSentEvent;
 import org.springframework.stereotype.Service;
+import reactor.core.publisher.Flux;
 
 @Service
 @RequiredArgsConstructor
@@ -30,7 +33,7 @@ public class ChatServiceImpl implements ChatService{
 
     // 1. 채팅 세션 생성
     @Override
-    public Long startChatSession(Long memberId) {
+    public Long startSession(Long memberId) {
         Member member = memberRepository.findById(memberId)
                 .orElseThrow(() -> new NotFoundException("Member를 찾을 수 없습니다."));
 
@@ -43,7 +46,7 @@ public class ChatServiceImpl implements ChatService{
 
     // 2. 편집 챗봇 메시지 전송
     @Override
-    public ChatSendResponseDTO sendEditMessage(Long memberId, Long chatSessionId, Long editSessionId, String userText) {
+    public ChatSendResponseDTO sendEdit(Long memberId, Long chatSessionId, Long editSessionId, String userText) {
         ChatSession chatSession = chatSessionRepository.findById(chatSessionId)
                 .orElseThrow(() -> new NotFoundException("ChatSession을 찾을 수 없습니다."));
 
@@ -76,5 +79,10 @@ public class ChatServiceImpl implements ChatService{
                 assistantText,
                 editedUrl
         );
+    }
+
+    @Override
+    public Flux<ServerSentEvent<String>> streamText(ChatStreamRequestDTO request) {
+        return null;
     }
 }

@@ -8,9 +8,9 @@ import reactor.core.publisher.Flux;
 // 채팅 세션 생성 / 유지용
 public interface ChatService {
 
-    Long startChatSession(Long memberId);
+    Long startSession(Long memberId);
 
-    ChatSendResponseDTO sendEditMessage(Long memberId, Long chatSessionId, Long editSessionId, String userText);
+    ChatSendResponseDTO sendEdit(Long memberId, Long chatSessionId, Long editSessionId, String userText);
 
     // 텍스트 스트리밍
     Flux<ServerSentEvent<String>> streamText(ChatStreamRequestDTO request);

@@ -43,7 +43,7 @@ public class EditController {
 
     @GetMapping("/{editSessionId}/current")
     @Operation(summary = "현재 버전 조회", description = "현재 currentIndex가 가리키는 버전 정보를 가져옵니다.")
-    public ResponseEntity<EditVersionResponseDTO> current(
+    public ResponseEntity<EditVersionResponseDTO> getCurrentVersion(
             @RequestParam Long memberId,
             @PathVariable Long editSessionId
     ) {
@@ -116,7 +116,7 @@ public class EditController {
 
     @DeleteMapping("/{editSessionId}")
     @Operation(summary = "편집 취소 + 정리", description = "세션 취소 후 생성된 버전들을 S3에서 삭제")
-    public ResponseEntity<Void> cancel(
+    public ResponseEntity<Void> cancelAndCleanUp(
             @RequestParam Long memberId,
             @PathVariable Long editSessionId
     ) {
