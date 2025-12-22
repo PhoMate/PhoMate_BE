@@ -2,14 +2,18 @@ package barcode.phomate.domain.chat.api;
 
 import barcode.phomate.domain.chat.application.ChatService;
 import barcode.phomate.domain.chat.dto.ChatSendResponseDTO;
+import barcode.phomate.domain.chat.dto.ChatStreamRequestDTO;
 import io.swagger.v3.oas.annotations.Operation;
 import lombok.RequiredArgsConstructor;
+import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
+import org.springframework.http.codec.ServerSentEvent;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
+import reactor.core.publisher.Flux;
 
 @RestController
 @RequiredArgsConstructor
@@ -23,7 +27,7 @@ public class ChatController {
     public ResponseEntity<Long> startSession(
             @RequestParam Long memberId
     ) {
-        return ResponseEntity.ok(chatService.startChatSession(memberId));
+        return ResponseEntity.ok(chatService.startSession(memberId));
     }
 
     @PostMapping("/send-edit")
@@ -35,7 +39,13 @@ public class ChatController {
             @RequestParam String userText
     ) {
         return ResponseEntity.ok(
-                chatService.sendEditMessage(memberId, chatSessionId, editSessionId, userText)
+                chatService.sendEdit(memberId, chatSessionId, editSessionId, userText)
         );
+    }
+
+    @PostMapping(value = "/stream", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
+    @Operation(summary = "텍스트 스트리밍", description = "SSE로 delta 반환")
+    public Flux<ServerSentEvent<String>> streamText(@RequestBody ChatStreamRequestDTO request) {
+        return chatService.streamText(request);
     }
 }
