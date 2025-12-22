@@ -26,7 +26,6 @@ public class FollowController {
         return ResponseEntity.ok(followService.toggleFollow(followerId, followeeId));
     }
 
-    // 내가 팔로우한 사람 목록
     @GetMapping("/me")
     @Operation(summary = "팔로우 목록 조회", description = "팔로우 목록 조회 API")
     public ResponseEntity<List<FolloweeResponseDTO>> myFollowees(@RequestParam Long followerId) {

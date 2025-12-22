@@ -73,4 +73,17 @@ public class PostController {
         return ResponseEntity.noContent().build();
     }
 
+    @GetMapping("/author/{authorId}")
+    @Operation(summary = "특정 유저가 작성한 게시글 조회", description = "특정 유저가 작성한 게시글 조회 API")
+    public ResponseEntity<PostFeedResponseDTO> getUserPostsLatest(
+            @PathVariable Long authorId,
+            @RequestParam(required = false) String cursorTime,
+            @RequestParam(required = false) Long cursorId,
+            @RequestParam(defaultValue = "12") int size,
+            @RequestParam(required = false) Long viewerId
+    ) {
+        PostFeedResponseDTO response = postService.getUserFeedLatest(authorId, cursorTime, cursorId, size, viewerId);
+        return ResponseEntity.ok(response);
+    }
+
 }

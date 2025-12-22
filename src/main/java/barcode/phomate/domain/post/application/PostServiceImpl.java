@@ -284,6 +284,54 @@ public class PostServiceImpl implements PostService {
         log.info("[POST-DEL] deleted postId={} memberId={}", postId, memberId);
     }
 
+    @Override
+    @Transactional(readOnly = true)
+    public PostFeedResponseDTO getUserFeedLatest(Long authorId,
+                                                 String cursorTime,
+                                                 Long cursorId,
+                                                 int size,
+                                                 Long viewerId) {
+
+        int pageSize = Math.min(Math.max(size, 1), 50);
+        var pageable = PageRequest.of(0, pageSize);
+
+        LocalDateTime time = (cursorTime == null || cursorTime.isBlank())
+                ? null
+                : LocalDateTime.parse(cursorTime);
+
+        List<Post> posts = postRepository.findUserFeedLatest(authorId, time, cursorId, pageable);
+
+        if (posts.isEmpty()) {
+            return PostFeedResponseDTO.empty();
+        }
+
+        List<Long> postIds = posts.stream().map(Post::getId).toList();
+
+        final Set<Long> likedSet =
+                (viewerId == null)
+                        ? Set.of()
+                        : new HashSet<>(likesRepository.findLikedPostIds(viewerId, postIds));
+
+        List<PostResponseDTO> items = posts.stream()
+                .map(p -> PostResponseDTO.of(
+                        p.getId(),
+                        p.getTitle(),
+                        cloudFrontBaseUrl + "/" + p.getThumbnailKey(),
+                        p.getLikeCount(),
+                        likedSet.contains(p.getId())
+                ))
+                .toList();
+
+        Post last = posts.get(posts.size() - 1);
+        PostFeedResponseDTO.Cursor nextCursor =
+                PostFeedResponseDTO.Cursor.latest(last.getCreatedAt().toString(), last.getId());
+
+        boolean hasNext = posts.size() == pageSize;
+        return PostFeedResponseDTO.of(items, nextCursor, hasNext);
+    }
+
+
+
 
     private boolean hasText(String s) {
         return s != null && !s.trim().isEmpty();
