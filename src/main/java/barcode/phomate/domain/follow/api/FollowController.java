@@ -29,7 +29,7 @@ public class FollowController {
 
     @GetMapping("/me")
     @Operation(summary = "팔로우 목록 조회", description = "팔로우 목록 조회 API")
-    public ResponseEntity<List<FolloweeResponseDTO>> myFollowees(@AuthenticationPrincipal Long followerId) {
-        return ResponseEntity.ok(followService.getMyFollowees(followerId));
+    public ResponseEntity<List<FolloweeResponseDTO>> myFollowees(@AuthenticationPrincipal Long memberId) {
+        return ResponseEntity.ok(followService.getMyFollowees(memberId));
     }
 }
