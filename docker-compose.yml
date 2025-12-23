@@ -1,8 +1,73 @@
 services:
+  # MySQL 데이터베이스 (서버 DB)
+  mysql:
+    image: mysql:8.0
+    container_name: phomate-mysql
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD}
+      MYSQL_DATABASE: ${MYSQL_DATABASE}
+      MYSQL_USER: ${MYSQL_USER}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD}
+      TZ: Asia/Seoul
+    ports:
+      - "3307:3306"
+    volumes:
+      - mysql-data:/var/lib/mysql
+    networks:
+      - phomate-network
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-uroot", "-p${MYSQL_ROOT_PASSWORD}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+    command: --character-set-server=utf8mb4 --collation-server=utf8mb4_unicode_ci
+    restart: unless-stopped
+
+  # Spring Boot Backend
   backend:
     image: chohaewon48/phomate-backend:dev
     container_name: phomate-backend
+    environment:
+      # DB 접속
+      DB_URL: ${DB_URL}
+      DB_USERNAME: ${DB_USERNAME}
+      DB_PASSWORD: ${DB_PASSWORD}
+
+      # FastAPI (별도 EC2)
+      FASTAPI_BASEURL: ${FASTAPI_BASEURL}
+
+      # JWT
+      JWT_SECRET: ${JWT_SECRET}
+
+      # AWS - S3
+      AWS_ACCESS_KEY: ${AWS_ACCESS_KEY}
+      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY}
+      S3_BUCKET: ${S3_BUCKET}
+      CLOUDFRONT_BASEURL: ${CLOUDFRONT_BASEURL}
+
+      # OAuth
+      GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID}
+      GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET}
+
+      # AI
+      OPENAI_API_KEY: ${OPENAI_API_KEY}
+      GEMINI_API_KEY: ${GEMINI_API_KEY}
+
+      SPRING_PROFILES_ACTIVE: docker
     ports:
       - "8080:8080"
+    networks:
+      - phomate-network
+    depends_on:
+      mysql:
+        condition: service_healthy
     restart: always
 
+networks:
+  phomate-network:
+    driver: bridge
+
+volumes:
+  mysql-data:
+    driver: local
