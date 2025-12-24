@@ -32,6 +32,8 @@ public class SecurityConfig {
                 .authorizeHttpRequests(auth -> auth
                         .requestMatchers(HttpMethod.OPTIONS, "/**").permitAll()
 
+                        .requestMatchers("/health").permitAll()
+
                         .requestMatchers(HttpMethod.GET, "/api/posts").permitAll()
                         .requestMatchers(
                                 RegexRequestMatcher.regexMatcher("^/api/posts/[0-9]+$")
