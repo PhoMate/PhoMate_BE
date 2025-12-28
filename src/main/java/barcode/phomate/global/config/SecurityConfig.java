@@ -42,10 +42,7 @@ public class SecurityConfig {
                                 RegexRequestMatcher.regexMatcher("^/api/posts/author/[0-9]+$")
                         ).permitAll()
 
-                        .requestMatchers("/api/auth/google").permitAll()
-                        .requestMatchers("/api/auth/google/login").permitAll()
-                        .requestMatchers("/api/auth/google/callback").permitAll()
-                        .requestMatchers("/api/auth/reissue").permitAll()
+                        .requestMatchers("/api/auth/**").permitAll()
 
                         .requestMatchers("/actuator/**").permitAll()
                         .requestMatchers(
