@@ -24,6 +24,12 @@ services:
     command: --character-set-server=utf8mb4 --collation-server=utf8mb4_unicode_ci
     restart: unless-stopped
 
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
   # Spring Boot Backend
   backend:
     image: chohaewon48/phomate-backend:dev
@@ -64,6 +70,12 @@ services:
         condition: service_healthy
     restart: always
 
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
 networks:
   phomate-network:
     driver: bridge
@@ -71,3 +83,5 @@ networks:
 volumes:
   mysql-data:
     driver: local
+
+
