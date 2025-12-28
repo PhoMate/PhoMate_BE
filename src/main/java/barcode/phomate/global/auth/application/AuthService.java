@@ -17,6 +17,7 @@ import barcode.phomate.global.jwt.domain.entity.RefreshToken;
 import barcode.phomate.global.jwt.domain.repository.RefreshTokenRepository;
 import barcode.phomate.global.jwt.dto.RefreshRequestDTO;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -25,6 +26,7 @@ import java.time.LocalDateTime;
 @Service
 @RequiredArgsConstructor
 @Transactional
+@Slf4j
 public class AuthService {
 
     private final GoogleTokenClient googleTokenClient;
@@ -36,8 +38,12 @@ public class AuthService {
 
     public GoogleLoginResponseDTO loginWithGoogle(GoogleLoginRequestDTO req) {
 
+        log.info("loginWithGoogle start code={}, verifier={}", req.getCode(), req.getCodeVerifier());
+
         // code -> Google token 교환 + id_token 검증 -> GoogleUserInfo
         GoogleUserInfoDTO userInfo = verifyGoogle(req);
+        log.info("verifyGoogle success sub/email={}", userInfo.getName()); // 필드명 맞게
+
 
         // 신규 멤버 생성 or 기존 멤버 객체 반환
         Member member = memberService.findOrCreateMember(SocialProvider.GOOGLE, userInfo);
