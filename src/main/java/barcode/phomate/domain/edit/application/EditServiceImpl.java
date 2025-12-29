@@ -51,7 +51,8 @@ public class EditServiceImpl implements EditService{
     private final WebClient downloadClient = WebClient.builder()
             .exchangeStrategies(ExchangeStrategies.builder()
                 .codecs(c -> c.defaultCodecs().maxInMemorySize(20 * 1024 * 1024))
-                    .build())
+                    .build()
+            )
             .build();
 
     // 1. 편집 세션 시작
@@ -337,15 +338,21 @@ public class EditServiceImpl implements EditService{
 
     private byte[] downloadBytes(String url) {
         try {
-            return downloadClient.get()
+            byte[] bytes = downloadClient.get()
                     .uri(url)
                     .retrieve()
                     .bodyToMono(byte[].class)
                     .block();
+
+            if (bytes == null || bytes.length == 0) {
+                throw new BadRequestException("이미지 다운로드 결과가 비어있습니다. url=" + url);
+            }
+            return bytes;
         } catch (Exception e) {
             // 로그 추가
             log.error("[EDIT] downloadBytes failed url={} exClass={} msg={}",
-                    url, e.getClass().getName(), e.getMessage(), e);            throw new BadRequestException("이미지 다운로드 실패 : url=" + url);
+                    url, e.getClass().getName(), e.getMessage(), e);
+            throw new BadRequestException("이미지 다운로드 실패 : url=" + url);
         }
     }
     private byte[] ensureJpg(byte[] bytes) {
