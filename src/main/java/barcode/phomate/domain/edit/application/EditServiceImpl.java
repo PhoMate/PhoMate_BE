@@ -50,7 +50,7 @@ public class EditServiceImpl implements EditService{
     // CloudFront URL에서 이미지를 bytes로 가져오는 용도
     private final WebClient downloadClient = WebClient.builder()
             .exchangeStrategies(ExchangeStrategies.builder()
-                .codecs(c -> c.defaultCodecs().maxInMemorySize(10 * 1024 * 1024))
+                .codecs(c -> c.defaultCodecs().maxInMemorySize(20 * 1024 * 1024))
                     .build())
             .build();
 
@@ -344,8 +344,8 @@ public class EditServiceImpl implements EditService{
                     .block();
         } catch (Exception e) {
             // 로그 추가
-            log.error("[EDIT] downloadBytes failed!!!! url={}", url, e);
-            throw new BadRequestException("이미지 다운로드 실패 : url=" + url);
+            log.error("[EDIT] downloadBytes failed url={} exClass={} msg={}",
+                    url, e.getClass().getName(), e.getMessage(), e);            throw new BadRequestException("이미지 다운로드 실패 : url=" + url);
         }
     }
     private byte[] ensureJpg(byte[] bytes) {
