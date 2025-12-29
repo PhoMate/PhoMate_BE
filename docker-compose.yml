@@ -35,6 +35,9 @@ services:
     image: chohaewon48/phomate-backend:dev
     container_name: phomate-backend
     environment:
+      # Java heap 메모리 명시
+      JAVA_TOOL_OPTIONS: "-Xms128m -Xmx384m"
+
       # DB 접속
       DB_URL: ${DB_URL}
       DB_USERNAME: ${DB_USERNAME}
