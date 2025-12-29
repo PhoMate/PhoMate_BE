@@ -16,6 +16,7 @@ import barcode.phomate.global.exception.NotFoundException;
 import barcode.phomate.global.gemini.GeminiImageEditClient;
 import barcode.phomate.global.s3.application.S3StorageService;
 import barcode.phomate.global.util.ImageJpegUtil;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.transaction.annotation.Transactional;
 import lombok.RequiredArgsConstructor;
 import org.springframework.beans.factory.annotation.Value;
@@ -23,10 +24,12 @@ import org.springframework.http.MediaType;
 import org.springframework.stereotype.Service;
 import org.springframework.util.StringUtils;
 import org.springframework.web.multipart.MultipartFile;
+import org.springframework.web.reactive.function.client.ExchangeStrategies;
 import org.springframework.web.reactive.function.client.WebClient;
 
 import java.util.List;
 
+@Slf4j
 @Service
 @RequiredArgsConstructor
 @Transactional
@@ -45,7 +48,11 @@ public class EditServiceImpl implements EditService{
     private String cloudFrontBaseUrl;
 
     // CloudFront URL에서 이미지를 bytes로 가져오는 용도
-    private final WebClient downloadClient = WebClient.builder().build();
+    private final WebClient downloadClient = WebClient.builder()
+            .exchangeStrategies(ExchangeStrategies.builder()
+                .codecs(c -> c.defaultCodecs().maxInMemorySize(10 * 1024 * 1024))
+                    .build())
+            .build();
 
     // 1. 편집 세션 시작
     @Override
@@ -336,6 +343,8 @@ public class EditServiceImpl implements EditService{
                     .bodyToMono(byte[].class)
                     .block();
         } catch (Exception e) {
+            // 로그 추가
+            log.error("[EDIT] downloadBytes failed!!!! url={}", url, e);
             throw new BadRequestException("이미지 다운로드 실패 : url=" + url);
         }
     }
