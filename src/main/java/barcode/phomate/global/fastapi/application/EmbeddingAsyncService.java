@@ -16,6 +16,11 @@ public class EmbeddingAsyncService {
     private final EmbeddingWorkerClient embeddingWorkerClient;
 
     @Async("embeddingExecutor")
+    public void embedPhoto(EmbedRequestDTO req) {
+        embedPost(req);
+    }
+
+    @Async("embeddingExecutor")
     public void embedPost(EmbedRequestDTO req) {
         int maxAttempts = 3;
         long backoffMs = 300;
@@ -60,6 +65,10 @@ public class EmbeddingAsyncService {
         }
     }
 
+    @Async("embeddingExecutor")
+    public void deletePhotoVector(Long photoId) {
+        deletePostVector(photoId);
+    }
 
     @Async("embeddingExecutor")
     public void deletePostVector(Long postId) {

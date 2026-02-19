@@ -13,6 +13,11 @@ public class S3DeleteAsyncService {
     private final S3StorageService s3StorageService;
 
     @Async("embeddingExecutor")
+    public void deletePhotoImages(Long photoId, String originalKey, String thumbKey, String previewKey) {
+        deletePostImages(photoId, originalKey, thumbKey, previewKey);
+    }
+
+    @Async("embeddingExecutor")
     public void deletePostImages(Long postId, String originalKey, String thumbKey, String previewKey) {
         int maxAttempts = 3;
         long backoffMs = 300;

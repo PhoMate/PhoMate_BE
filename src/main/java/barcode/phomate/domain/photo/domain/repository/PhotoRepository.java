@@ -1,0 +1,7 @@
+package barcode.phomate.domain.photo.domain.repository;
+
+import barcode.phomate.domain.photo.domain.entity.Photo;
+import org.springframework.data.jpa.repository.JpaRepository;
+
+public interface PhotoRepository extends JpaRepository<Photo, Long> {
+}
