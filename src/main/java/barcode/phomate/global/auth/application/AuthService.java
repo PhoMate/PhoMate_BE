@@ -1,7 +1,7 @@
 package barcode.phomate.global.auth.application;
 
 
-import barcode.phomate.domain.member.domain.application.MemberService;
+import barcode.phomate.domain.member.application.MemberService;
 import barcode.phomate.domain.member.domain.entity.Member;
 import barcode.phomate.domain.member.domain.entity.SocialProvider;
 import barcode.phomate.global.auth.dto.GoogleLoginRequestDTO;

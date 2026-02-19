@@ -79,6 +79,10 @@ public class Photo extends BaseEntity {
         this.previewKey = previewKey;
     }
 
+    public void updateShotAt(LocalDateTime shotAt) {
+        this.shotAt = shotAt;
+    }
+
     public String thumbnailKey() { return thumbnailKey; }
     public String previewKey()   { return previewKey; }
 }

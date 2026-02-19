@@ -1,4 +1,4 @@
-package barcode.phomate.domain.member.domain.application;
+package barcode.phomate.domain.member.application;
 
 import barcode.phomate.domain.member.domain.entity.Member;
 import barcode.phomate.domain.member.domain.entity.SocialLogin;

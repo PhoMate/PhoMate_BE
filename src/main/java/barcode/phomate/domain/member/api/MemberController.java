@@ -1,6 +1,6 @@
-package barcode.phomate.domain.member.domain.api;
+package barcode.phomate.domain.member.api;
 
-import barcode.phomate.domain.member.domain.application.MemberService;
+import barcode.phomate.domain.member.application.MemberService;
 import barcode.phomate.domain.member.dto.MemberResponseDTO;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;

@@ -35,7 +35,7 @@ public class S3StorageService {
     public void deleteObject(String key) {
         if (key == null || key.isBlank() || "TEMP".equals(key)) return;
         }
-    // 한개 삭제
+
     public void deleteOne(String key) {
         if (key == null || key.isBlank()) return;
         s3Client.deleteObject(DeleteObjectRequest.builder()
@@ -44,7 +44,6 @@ public class S3StorageService {
                 .build());
     }
 
-    // 여러개 삭제
     public void deleteMany(List<String> keys) {
         if (keys == null || keys.isEmpty()) return;
 

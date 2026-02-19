@@ -1,0 +1,238 @@
+package barcode.phomate.domain.photo.application;
+
+import barcode.phomate.domain.member.domain.entity.Member;
+import barcode.phomate.domain.member.domain.repository.MemberRepository;
+import barcode.phomate.domain.photo.domain.entity.Photo;
+import barcode.phomate.domain.photo.domain.repository.PhotoRepository;
+import barcode.phomate.global.exception.ForbiddenException;
+import barcode.phomate.global.exception.NotFoundException;
+import barcode.phomate.global.fastapi.application.EmbeddingAsyncService;
+import barcode.phomate.global.fastapi.dto.EmbedRequestDTO;
+import barcode.phomate.global.s3.application.S3DeleteAsyncService;
+import barcode.phomate.global.s3.application.S3StorageService;
+import barcode.phomate.global.tx.AfterCommitExecutor;
+import barcode.phomate.global.util.ImageResizeUtil;
+import barcode.phomate.global.util.ImageTypeUtil;
+import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+import org.springframework.web.multipart.MultipartFile;
+
+import java.io.IOException;
+import java.time.Instant;
+import java.time.LocalDateTime;
+import java.time.ZoneId;
+
+@Service
+@RequiredArgsConstructor
+@Transactional
+@Slf4j
+public class PhotoService {
+
+    private final PhotoRepository photoRepository;
+    private final MemberRepository memberRepository;
+    private final S3StorageService s3StorageService;
+    private final AfterCommitExecutor afterCommitExecutor;
+    private final EmbeddingAsyncService embeddingAsyncService;
+    private final S3DeleteAsyncService s3DeleteAsyncService;
+
+    @Value("${app.cdn.base-url}")
+    private String cloudFrontBaseUrl;
+
+    public Long createPhoto(Long memberId, MultipartFile image, Long clientLastModifiedMs) {
+        Member member = memberRepository.findById(memberId)
+                .orElseThrow(() -> new NotFoundException("회원을 찾을 수 없습니다."));
+
+        LocalDateTime shotAt = resolveShotAt(clientLastModifiedMs);
+
+        Photo photo = photoRepository.save(Photo.builder()
+                .member(member)
+                .shotAt(shotAt)
+                .description(null) // 추후 vision ai 활용한 자동생성 기능 추가
+                .imagePrefix("TEMP")
+                .originalKey("TEMP")
+                .thumbnailKey("TEMP")
+                .previewKey("TEMP")
+                .build());
+
+        String prefix = "photos/" + photo.getId();
+        long v = System.currentTimeMillis();
+
+        String ext = ImageTypeUtil.safeExt(image.getContentType(), image.getOriginalFilename());
+        String originalContentType = ImageTypeUtil.normalizeContentType(image.getContentType(), ext);
+
+        byte[] originalBytes;
+        try {
+            originalBytes = image.getBytes();
+        } catch (IOException e) {
+            throw new IllegalStateException("Failed to read uploaded image bytes.", e);
+        }
+
+        byte[] thumbJpg;
+        byte[] previewJpg;
+        try {
+            thumbJpg = ImageResizeUtil.toJpgResized(originalBytes, 320, 0.82f);
+            previewJpg = ImageResizeUtil.toJpgResized(originalBytes, 1080, 0.85f);
+        } catch (IOException e) {
+            throw new IllegalStateException("Failed to decode/resize image.", e);
+        }
+
+        String originalKey = prefix + "/o_" + v + "." + ext;
+        String thumbKey    = prefix + "/t_" + v + ".jpg";
+        String previewKey  = prefix + "/p_" + v + ".jpg";
+
+        String cache = "public, max-age=31536000";
+        s3StorageService.putBytes(originalKey, originalBytes, originalContentType, cache);
+        s3StorageService.putBytes(thumbKey, thumbJpg, "image/jpeg", cache);
+        s3StorageService.putBytes(previewKey, previewJpg, "image/jpeg", cache);
+
+        photo.updateImageKeys(prefix, originalKey, thumbKey, previewKey);
+
+        String previewUrl = cloudFrontBaseUrl + "/" + previewKey;
+
+        Long createdAtMs = photo.getCreatedAt()
+                .atZone(ZoneId.systemDefault())
+                .toInstant()
+                .toEpochMilli();
+
+        String textForEmbedding = (photo.getDescription() == null) ? "" : photo.getDescription().trim();
+
+        EmbedRequestDTO reqDto = new EmbedRequestDTO(
+                photo.getId(),
+                member.getId(),
+                previewUrl,
+                textForEmbedding,
+                createdAtMs
+        );
+
+        afterCommitExecutor.run(() -> embeddingAsyncService.embedPhoto(reqDto));
+        return photo.getId();
+    }
+
+    public Long updatePhoto(Long memberId, Long photoId, MultipartFile image, Long clientLastModifiedMs) {
+        Photo photo = photoRepository.findById(photoId)
+                .orElseThrow(() -> new NotFoundException("사진을 찾을 수 없습니다."));
+
+        if (!photo.getMember().getId().equals(memberId)) {
+            throw new ForbiddenException("수정 권한이 없습니다.");
+        }
+
+        boolean imageChanged = (image != null && !image.isEmpty());
+
+        if (imageChanged) {
+            photo.updateShotAt(resolveShotAt(clientLastModifiedMs));
+        }
+
+        final String oldOriginalKey = photo.getOriginalKey();
+        final String oldThumbKey = photo.getThumbnailKey();
+        final String oldPreviewKey = photo.getPreviewKey();
+
+        final String prefix = "photos/" + photo.getId();
+
+        String newOriginalKey = oldOriginalKey;
+        String newThumbKey = oldThumbKey;
+        String newPreviewKey = oldPreviewKey;
+
+        if (imageChanged) {
+            long v = System.currentTimeMillis();
+
+            String ext = ImageTypeUtil.safeExt(image.getContentType(), image.getOriginalFilename());
+            String originalContentType = ImageTypeUtil.normalizeContentType(image.getContentType(), ext);
+
+            byte[] originalBytes;
+            try {
+                originalBytes = image.getBytes();
+            } catch (IOException e) {
+                throw new IllegalStateException("Failed to read uploaded image bytes.", e);
+            }
+
+            byte[] thumbJpg;
+            byte[] previewJpg;
+            try {
+                thumbJpg = ImageResizeUtil.toJpgResized(originalBytes, 320, 0.82f);
+                previewJpg = ImageResizeUtil.toJpgResized(originalBytes, 1080, 0.85f);
+            } catch (IOException e) {
+                throw new IllegalStateException("Failed to decode/resize image.", e);
+            }
+
+            newOriginalKey = prefix + "/o_" + v + "." + ext;
+            newThumbKey    = prefix + "/t_" + v + ".jpg";
+            newPreviewKey  = prefix + "/p_" + v + ".jpg";
+
+            String cache = "public, max-age=31536000";
+            s3StorageService.putBytes(newOriginalKey, originalBytes, originalContentType, cache);
+            s3StorageService.putBytes(newThumbKey, thumbJpg, "image/jpeg", cache);
+            s3StorageService.putBytes(newPreviewKey, previewJpg, "image/jpeg", cache);
+
+            photo.updateImageKeys(prefix, newOriginalKey, newThumbKey, newPreviewKey);
+        }
+
+        final String previewUrl = cloudFrontBaseUrl + "/" + newPreviewKey;
+        final Long createdAtMs = photo.getCreatedAt()
+                .atZone(ZoneId.systemDefault())
+                .toInstant()
+                .toEpochMilli();
+
+        String textForEmbedding = (photo.getDescription() == null) ? "" : photo.getDescription().trim();
+
+        final EmbedRequestDTO reqDto = new EmbedRequestDTO(
+                photo.getId(),
+                photo.getMember().getId(),
+                previewUrl,
+                textForEmbedding,
+                createdAtMs
+        );
+
+        afterCommitExecutor.run(() -> {
+            embeddingAsyncService.embedPhoto(reqDto);
+
+            if (imageChanged) {
+                s3DeleteAsyncService.deletePhotoImages(photoId, oldOriginalKey, oldThumbKey, oldPreviewKey);
+            }
+        });
+
+        return photo.getId();
+    }
+
+    public void deletePhoto(Long memberId, Long photoId) {
+        Photo photo = photoRepository.findById(photoId)
+                .orElseThrow(() -> new NotFoundException("사진을 찾을 수 없습니다."));
+
+        Long ownerId = photo.getMember().getId();
+        if (!ownerId.equals(memberId)) {
+            throw new ForbiddenException("삭제 권한이 없습니다.");
+        }
+
+        final String originalKey = photo.getOriginalKey();
+        final String thumbKey = photo.getThumbnailKey();
+        final String previewKey = photo.getPreviewKey();
+
+        photoRepository.delete(photo);
+
+        afterCommitExecutor.run(() -> {
+            try {
+                embeddingAsyncService.deletePhotoVector(photoId);
+            } catch (Exception e) {
+                log.error("[VEC-DEL] enqueue failed photoId={} err={}", photoId, e.getMessage(), e);
+            }
+
+            try {
+                s3DeleteAsyncService.deletePhotoImages(photoId, originalKey, thumbKey, previewKey);
+            } catch (Exception e) {
+                log.error("[S3-DEL] enqueue failed photoId={} originalKey={} thumbKey={} previewKey={} err={}",
+                        photoId, originalKey, thumbKey, previewKey, e.getMessage(), e);
+            }
+        });
+
+        log.info("[PHOTO-DEL] deleted photoId={} memberId={}", photoId, memberId);
+    }
+
+    private LocalDateTime resolveShotAt(Long clientLastModifiedMs) {
+        if (clientLastModifiedMs != null && clientLastModifiedMs > 0) {
+            return LocalDateTime.ofInstant(Instant.ofEpochMilli(clientLastModifiedMs), ZoneId.systemDefault());
+        }
+        return LocalDateTime.now();
+    }
+}
