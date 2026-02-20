@@ -1,5 +1,5 @@
 # 1. 베이스 이미지 설정 (JDK 포함된 이미지)
-FROM eclipse-temurin:17-jdk-jammy
+FROM eclipse-temurin:17-jre-jammy
 
 
 # 2. 컨테이너 안에서 작업할 디렉토리
