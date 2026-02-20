@@ -19,6 +19,8 @@ jobs:
         with:
           java-version: '17'
           distribution: 'temurin'
+          # gradle 캐시 추가
+          cache: gradle
 
       # 3. gradlew 실행 권한 주기
       - name: Grant execute permission for Gradle wrapper
@@ -39,10 +41,17 @@ jobs:
       - name: Build & Push Docker Image
         run: |
           IMAGE_NAME=${{ secrets.DOCKERHUB_USERNAME }}/phomate-backend
-          docker build -t $IMAGE_NAME:dev .
-          docker tag $IMAGE_NAME:dev $IMAGE_NAME:latest
+          SHA_TAG=${GITHUB_SHA::12}
+
+          docker build -t $IMAGE_NAME:dev -t $IMAGE_NAME:$SHA_TAG .
           docker push $IMAGE_NAME:dev
-          docker push $IMAGE_NAME:latest
+          docker push $IMAGE_NAME:$SHA_TAG
+
+      # CI 로그에 태그 찍는 용도
+      - name: Show image info
+        run: |
+          docker images | grep phomate-backend || true
+          echo "SHA deployed: ${GITHUB_SHA::12}"
 
       # 7. EC2에 접속 → compose로 재배포
       - name: Deploy to EC2
@@ -57,7 +66,8 @@ jobs:
             IMAGE_NAME=${{ secrets.DOCKERHUB_USERNAME }}/phomate-backend:dev
             sudo docker pull $IMAGE_NAME
 
-            sudo docker-compose down || true
-            sudo docker-compose up -d
+            # docker compose / docker-compose 호환
+            sudo docker compose down || sudo docker-compose down || true
+            sudo docker compose up -d || sudo docker-compose up -d
 
             sudo docker image prune -f
