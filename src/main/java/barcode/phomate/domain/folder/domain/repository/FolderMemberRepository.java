@@ -18,4 +18,7 @@ public interface FolderMemberRepository extends JpaRepository<FolderMember, Long
 
     // 내가 받은 대기 중인 초대 목록(공유 폴더 초대 여부 조회)
     List<FolderMember> findByMemberAndIsAcceptedFalse(Member member);
+
+    // 내가 초대 수락한 공유 폴더 목록 조회(폴더 목록 조회 시 필요)
+    List<FolderMember> findByMemberAndIsAcceptedTrue(Member member);
 }
