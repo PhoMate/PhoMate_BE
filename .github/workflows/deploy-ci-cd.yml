@@ -61,13 +61,11 @@ jobs:
           username: ubuntu
           key: ${{ secrets.EC2_KEY }}  # PEM 전체 복사
           script: |
-            cd /home/ubuntu
+            cd /home/ubuntu/PhoMate_BE
 
             IMAGE_NAME=${{ secrets.DOCKERHUB_USERNAME }}/phomate-backend:dev
-            sudo docker pull $IMAGE_NAME
+            sudo docker compose pull backend
 
             # docker compose / docker-compose 호환
-            sudo docker compose down || sudo docker-compose down || true
-            sudo docker compose up -d || sudo docker-compose up -d
-
+            sudo docker compose up -d --no-deps --force-recreate backend
             sudo docker image prune -f
