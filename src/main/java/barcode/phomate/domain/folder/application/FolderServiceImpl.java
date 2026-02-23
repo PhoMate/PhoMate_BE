@@ -1,6 +1,8 @@
 package barcode.phomate.domain.folder.application;
 
 import barcode.phomate.domain.folder.domain.entity.Folder;
+import barcode.phomate.domain.folder.domain.entity.FolderMember;
+import barcode.phomate.domain.folder.domain.entity.FolderRole;
 import barcode.phomate.domain.folder.domain.entity.FolderType;
 import barcode.phomate.domain.folder.domain.entity.PhotoFolder;
 import barcode.phomate.domain.folder.domain.repository.FolderMemberRepository;
@@ -8,7 +10,12 @@ import barcode.phomate.domain.folder.domain.repository.FolderRepository;
 import barcode.phomate.domain.folder.domain.repository.PhotoFolderRepository;
 import barcode.phomate.domain.folder.dto.FolderCreateRequestDTO;
 import barcode.phomate.domain.folder.dto.FolderDetailResponseDTO;
+import barcode.phomate.domain.folder.dto.FolderInvitationReplyRequestDTO;
+import barcode.phomate.domain.folder.dto.FolderInvitationResponseDTO;
+import barcode.phomate.domain.folder.dto.FolderInviteRequestDTO;
+import barcode.phomate.domain.folder.dto.FolderMemberRoleResponseDTO;
 import barcode.phomate.domain.folder.dto.FolderResponseDTO;
+import barcode.phomate.domain.folder.dto.FolderRoleUpdateRequestDTO;
 import barcode.phomate.domain.folder.dto.FolderUpdateRequestDTO;
 import barcode.phomate.domain.member.domain.entity.Member;
 import barcode.phomate.domain.member.domain.repository.MemberRepository;
@@ -42,6 +49,7 @@ public class FolderServiceImpl implements FolderService {
     @Value("${app.cdn.base-url}")
     private String cloudFrontBaseUrl;
 
+    // -------------1. 수동 폴더 시작--------------
     // 폴더 생성
     @Override
     public FolderResponseDTO createFolder(Long memberId, FolderCreateRequestDTO request) {
@@ -141,6 +149,137 @@ public class FolderServiceImpl implements FolderService {
         // DB에서 folder + PhotoFolder 매핑 삭제
         folderRepository.delete(folder);
     }
+    // -------------수동 폴더 끝--------------
+
+    // -------------2. 공유 폴더 시작--------------
+    // 공유 폴더 초대
+    @Override
+    public void inviteMember(Long requestMemberId, Long folderId, FolderInviteRequestDTO request) {
+
+        Member requester = findMember(requestMemberId);
+        Folder folder = findFolder(folderId);
+
+        // 공유 폴더인지 확인
+        if(folder.getType() != FolderType.SHARED) {
+            throw new ForbiddenException("공유 폴더에만 멤버를 초대할 수 있습니다.");
+        }
+
+        // 요청자가 ADMIN인지 확인
+        checkAdminRole(requester, folder);
+
+        // 초대할 멤버 조회
+        Member targetMember = findMember(request.memberId());
+
+        // 이미 초대된 멤버인지 확인(수락 여부랑은 상관 x)
+        folderMemberRepository.findByMemberAndFolder(targetMember, folder).ifPresent(fm -> {
+            throw new ForbiddenException("이미 초대된 멤버입니다.");
+        });
+
+        // ADMIN 권한은 초대로 부여 불가
+        if(request.role() == FolderRole.ADMIN) {
+            throw new ForbiddenException("ADMIN 권한은 초대로 부여할 수 없습니다.");
+        }
+
+        folderMemberRepository.save(FolderMember.builder()
+                .member(targetMember)
+                .folder(folder)
+                .role(request.role())
+                .isAccepted(false)
+                .build());
+    }
+
+    // 공유 폴더 초대 여부 조회
+    @Override
+    public FolderInvitationResponseDTO getInvitation(Long memberId, Long folderId) {
+
+        Member member = findMember(memberId);
+        Folder folder = findFolder(folderId);
+
+        FolderMember folderMember = folderMemberRepository.findByMemberAndFolder(member, folder)
+                .filter(fm -> !fm.isAccepted())
+                        .orElseThrow(() -> new NotFoundException("대기 중인 초대가 없습니다."));
+
+        return new FolderInvitationResponseDTO(
+                folderMember.getId(),
+                folder.getId(),
+                folder.getFolderName(),
+                folder.getOwner().getId(),
+                folderMember.getRole()
+        );
+    }
+
+    // 공유 폴더 초대 수락/거절
+    @Override
+    public void replyInvitation(Long memberId, Long folderId, FolderInvitationReplyRequestDTO request) {
+
+        Member member = findMember(memberId);
+        Folder folder = findFolder(folderId);
+
+        FolderMember folderMember = folderMemberRepository.findByMemberAndFolder(member, folder)
+                .filter(fm -> !fm.isAccepted())
+                .orElseThrow(() -> new NotFoundException("대기 중인 초대가 없습니다."));
+
+        if(request.accepted()) {
+            folderMember.acceptInvite();
+        } else {
+            folderMemberRepository.delete(folderMember);
+        }
+    }
+
+    // 공유 폴더 권한 조회
+    @Override
+    public FolderMemberRoleResponseDTO getMemberRole(Long requestMemberId, Long folderId, Long targetMemberId) {
+
+        Member requester = findMember(requestMemberId);
+        Folder folder = findFolder(folderId);
+        Member targetMember = findMember(targetMemberId);
+
+        // 본인 권한 조회거나 ADMIN이면 허용
+        boolean isSelf = requestMemberId.equals(targetMemberId);
+        boolean isAdmin = isAdminRole(requester, folder);
+
+        if(!isSelf && !isAdmin) {
+            throw new ForbiddenException("권한 조회 권한이 없습니다.");
+        }
+
+        FolderMember folderMember = folderMemberRepository.findByMemberAndFolder(targetMember, folder)
+                .orElseThrow(() -> new NotFoundException("해당 멤버가 공유 폴더에 속해 있지 않습니다."));
+
+        return new FolderMemberRoleResponseDTO(
+                targetMember.getId(),
+                targetMember.getNickname(),
+                folderMember.getRole()
+        );
+    }
+
+    // 공유 폴더 권한 부여/변경
+    @Override
+    public void updateMemberRole(Long requestMemberId, Long folderId, Long targetMemberId, FolderRoleUpdateRequestDTO request) {
+
+        Member requester = findMember(requestMemberId);
+        Folder folder = findFolder(folderId);
+        Member targetMember = findMember(targetMemberId);
+
+        // 요청자가 ADMIN인지 확인
+        checkAdminRole(requester, folder);
+
+        // 변경할 권한이 ADMIN이면 불가
+        if(request.role() == FolderRole.ADMIN) {
+            throw new ForbiddenException("ADMIN 권한은 부여할 수 없습니다.");
+        }
+
+        FolderMember folderMember = folderMemberRepository.findByMemberAndFolder(targetMember, folder)
+                .orElseThrow(() -> new NotFoundException("해당 멤버가 공유 폴더에 속해 있지 않습니다."));
+
+        // 대상이 ADMIN이면 변경 불가(폴더 생성자니까)
+        if(folderMember.getRole() == FolderRole.ADMIN) {
+            throw new ForbiddenException("ADMIN 권한은 변경할 수 없습니다.");
+        }
+
+        folderMember.updateRole(request.role());
+    }
+
+    // -------------2. 공유 폴더 끝--------------
 
     // -------------------------헬퍼 메서드-------------------------------------------------
 
@@ -170,6 +309,22 @@ public class FolderServiceImpl implements FolderService {
 
         if(!isOwner && !isMember) {
             throw new ForbiddenException("조회 권한이 없습니다.");
+        }
+    }
+
+    private boolean isAdminRole(Member member, Folder folder) {
+        // 폴더 소유자(생성자) : ADMIN
+        if(folder.getOwner().getId().equals(member.getId())) {
+            return true;
+        }
+        return folderMemberRepository.findByMemberAndFolder(member, folder)
+                .map(fm -> fm.getRole() == FolderRole.ADMIN)
+                .orElse(false);
+    }
+
+    private void checkAdminRole(Member member, Folder folder) {
+        if(!isAdminRole(member, folder)) {
+            throw new ForbiddenException("ADMIN 권한이 없습니다.");
         }
     }
 }
