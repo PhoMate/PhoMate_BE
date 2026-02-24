@@ -1,9 +1,8 @@
 package barcode.phomate.domain.photo.dto;
 
-public record PhotoUploadCommitItem(
+public record PhotoUploadInitResultDTO(
         Long photoId,
         String originalKey,
-        String etag,
-        Long clientLastModifiedMs
+        String uploadUrl,
+        Long expiresAtMs
 ) {}
-
