@@ -196,13 +196,43 @@ public class PhotoService {
         return photo.getId();
     }
 
-    public void deletePhoto(Long memberId, Long photoId) {
+    /**
+     * 휴지통 보내기 (Soft Delete)
+     * - DB row는 유지
+     * - S3/Vector 삭제하지 않음
+     */
+    public void moveToTrash(Long memberId, Long photoId) {
         Photo photo = photoRepository.findById(photoId)
                 .orElseThrow(() -> new NotFoundException("사진을 찾을 수 없습니다."));
 
-        Long ownerId = photo.getMember().getId();
-        if (!ownerId.equals(memberId)) {
+        if (!photo.getMember().getId().equals(memberId)) {
             throw new ForbiddenException("삭제 권한이 없습니다.");
+        }
+
+        // 멱등 처리
+        if (!photo.isDeleted()) {
+            photo.moveToTrash(LocalDateTime.now());
+        }
+
+        log.info("[PHOTO-TRASH] moved photoId={} memberId={}", photoId, memberId);
+    }
+
+    /**
+     * 완전삭제 (Hard Delete / Purge)
+     * 정책: 휴지통에 있는 사진만 완전삭제 가능
+     * - DB row 삭제
+     * - afterCommit으로 Vector/S3 삭제 enqueue
+     */
+    public void purgePhoto(Long memberId, Long photoId) {
+        Photo photo = photoRepository.findById(photoId)
+                .orElseThrow(() -> new NotFoundException("사진을 찾을 수 없습니다."));
+
+        if (!photo.getMember().getId().equals(memberId)) {
+            throw new ForbiddenException("삭제 권한이 없습니다.");
+        }
+
+        if (!photo.isDeleted()) {
+            throw new ForbiddenException("휴지통에 있는 사진만 완전삭제할 수 있습니다.");
         }
 
         final String originalKey = photo.getOriginalKey();
@@ -226,7 +256,26 @@ public class PhotoService {
             }
         });
 
-        log.info("[PHOTO-DEL] deleted photoId={} memberId={}", photoId, memberId);
+        log.info("[PHOTO-PURGE] deleted photoId={} memberId={}", photoId, memberId);
+    }
+
+    /**
+     * 휴지통에서 복구
+     */
+    public void restorePhoto(Long memberId, Long photoId) {
+        Photo photo = photoRepository.findById(photoId)
+                .orElseThrow(() -> new NotFoundException("사진을 찾을 수 없습니다."));
+
+        if (!photo.getMember().getId().equals(memberId)) {
+            throw new ForbiddenException("권한이 없습니다.");
+        }
+
+        // 멱등 처리
+        if (photo.isDeleted()) {
+            photo.restore();
+        }
+
+        log.info("[PHOTO-RESTORE] restored photoId={} memberId={}", photoId, memberId);
     }
 
     private LocalDateTime resolveShotAt(Long clientLastModifiedMs) {

@@ -26,7 +26,7 @@ public class PhotoController {
             @RequestPart(value = "clientLastModifiedMs", required = false) Long clientLastModifiedMs
     ) {
         Long photoId = photoService.createPhoto(memberId, image, clientLastModifiedMs);
-        return ResponseEntity.created(URI.create("/photos/" + photoId)).build();
+        return ResponseEntity.created(URI.create("/api/photos/" + photoId)).build();
     }
 
     @PatchMapping(value = "/{photoId}", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
@@ -42,12 +42,32 @@ public class PhotoController {
     }
 
     @DeleteMapping("/{photoId}")
-    @Operation(summary = "사진 삭제", description = "사진 삭제 API")
-    public ResponseEntity<Void> deletePhoto(
+    @Operation(summary = "사진 휴지통 보내기", description = "사진을 휴지통으로 이동(Soft Delete)합니다. S3/벡터는 삭제하지 않습니다.")
+    public ResponseEntity<Void> moveToTrash(
             @AuthenticationPrincipal Long memberId,
             @PathVariable Long photoId
     ) {
-        photoService.deletePhoto(memberId, photoId);
+        photoService.moveToTrash(memberId, photoId);
+        return ResponseEntity.noContent().build();
+    }
+
+    @DeleteMapping("/{photoId}/purge")
+    @Operation(summary = "사진 완전 삭제", description = "휴지통에 있는 사진을 완전 삭제(Hard Delete)합니다. DB 삭제 후 S3/벡터 삭제를 비동기로 수행합니다.")
+    public ResponseEntity<Void> purgePhoto(
+            @AuthenticationPrincipal Long memberId,
+            @PathVariable Long photoId
+    ) {
+        photoService.purgePhoto(memberId, photoId);
+        return ResponseEntity.noContent().build();
+    }
+
+    @PostMapping("/{photoId}/restore")
+    @Operation(summary = "사진 복구", description = "휴지통에 있는 사진을 복구합니다.")
+    public ResponseEntity<Void> restorePhoto(
+            @AuthenticationPrincipal Long memberId,
+            @PathVariable Long photoId
+    ) {
+        photoService.restorePhoto(memberId, photoId);
         return ResponseEntity.noContent().build();
     }
 }
