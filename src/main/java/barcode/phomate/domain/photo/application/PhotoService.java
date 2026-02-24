@@ -4,6 +4,8 @@ import barcode.phomate.domain.member.domain.entity.Member;
 import barcode.phomate.domain.member.domain.repository.MemberRepository;
 import barcode.phomate.domain.photo.domain.entity.Photo;
 import barcode.phomate.domain.photo.domain.repository.PhotoRepository;
+import barcode.phomate.domain.photo.dto.PhotoFeedResponseDTO;
+import barcode.phomate.domain.photo.dto.PhotoResponseDTO;
 import barcode.phomate.global.exception.ForbiddenException;
 import barcode.phomate.global.exception.NotFoundException;
 import barcode.phomate.global.fastapi.application.EmbeddingAsyncService;
@@ -16,6 +18,7 @@ import barcode.phomate.global.util.ImageTypeUtil;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.data.domain.PageRequest;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.multipart.MultipartFile;
@@ -24,6 +27,7 @@ import java.io.IOException;
 import java.time.Instant;
 import java.time.LocalDateTime;
 import java.time.ZoneId;
+import java.util.List;
 
 @Service
 @RequiredArgsConstructor
@@ -277,6 +281,71 @@ public class PhotoService {
 
         log.info("[PHOTO-RESTORE] restored photoId={} memberId={}", photoId, memberId);
     }
+
+    @Transactional(readOnly = true)
+    public PhotoFeedResponseDTO getAlbumLatest(String cursorShotAt, Long cursorId, int size, Long memberId) {
+
+        int pageSize = Math.min(Math.max(size, 1), 50);
+        var pageable = PageRequest.of(0, pageSize);
+
+        LocalDateTime shotAt = (cursorShotAt == null || cursorShotAt.isBlank())
+                ? null
+                : LocalDateTime.parse(cursorShotAt);
+
+        List<Photo> photos = photoRepository.findAlbumLatest(memberId, shotAt, cursorId, pageable);
+
+        if (photos.isEmpty()) {
+            return PhotoFeedResponseDTO.empty();
+        }
+
+        List<PhotoResponseDTO> items = photos.stream()
+                .map(p -> PhotoResponseDTO.of(
+                        p.getId(),
+                        cloudFrontBaseUrl + "/" + p.getThumbnailKey(),
+                        cloudFrontBaseUrl + "/" + p.getPreviewKey(),
+                        p.getShotAt().toString()
+                ))
+                .toList();
+
+        Photo last = photos.get(photos.size() - 1);
+        PhotoFeedResponseDTO.Cursor nextCursor =
+                PhotoFeedResponseDTO.Cursor.latest(last.getShotAt().toString(), last.getId());
+
+        boolean hasNext = photos.size() == pageSize;
+        return PhotoFeedResponseDTO.of(items, nextCursor, hasNext);
+    }
+
+    @Transactional(readOnly = true)
+    public PhotoFeedResponseDTO getTrashLatest(String cursorDeletedAt, Long cursorId, int size, Long memberId) {
+
+        int pageSize = Math.min(Math.max(size, 1), 50);
+        var pageable = PageRequest.of(0, pageSize);
+
+        LocalDateTime deletedAt = (cursorDeletedAt == null || cursorDeletedAt.isBlank())
+                ? null
+                : LocalDateTime.parse(cursorDeletedAt);
+
+        List<Photo> photos = photoRepository.findTrashLatest(memberId, deletedAt, cursorId, pageable);
+
+        if (photos.isEmpty()) return PhotoFeedResponseDTO.empty();
+
+        List<PhotoResponseDTO> items = photos.stream()
+                .map(p -> PhotoResponseDTO.of(
+                        p.getId(),
+                        cloudFrontBaseUrl + "/" + p.getThumbnailKey(),
+                        cloudFrontBaseUrl + "/" + p.getPreviewKey(),
+                        p.getShotAt().toString()
+                ))
+                .toList();
+
+        Photo last = photos.get(photos.size() - 1);
+        PhotoFeedResponseDTO.Cursor nextCursor =
+                PhotoFeedResponseDTO.Cursor.latest(last.getDeletedAt().toString(), last.getId());
+
+        boolean hasNext = photos.size() == pageSize;
+        return PhotoFeedResponseDTO.of(items, nextCursor, hasNext);
+    }
+
 
     private LocalDateTime resolveShotAt(Long clientLastModifiedMs) {
         if (clientLastModifiedMs != null && clientLastModifiedMs > 0) {

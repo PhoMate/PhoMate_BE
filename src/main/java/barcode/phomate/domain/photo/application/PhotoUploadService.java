@@ -46,20 +46,20 @@ public class PhotoUploadService {
     private static final long MAX_FILE_SIZE_BYTES = 30L * 1024 * 1024; // 30MB
     private static final String CACHE_CONTROL = "public, max-age=31536000";
 
-    public PhotoUploadInitResponse init(Long memberId, PhotoUploadInitRequest request) {
+    public PhotoUploadInitResponseDTO init(Long memberId, PhotoUploadInitRequestDTO request) {
         Member member = memberRepository.findById(memberId)
                 .orElseThrow(() -> new NotFoundException("회원을 찾을 수 없습니다."));
 
         if (request == null || request.items() == null || request.items().isEmpty()) {
-            return new PhotoUploadInitResponse(List.of());
+            return new PhotoUploadInitResponseDTO(List.of());
         }
 
-        List<PhotoUploadInitResult> results = new ArrayList<>(request.items().size());
+        List<PhotoUploadInitResultDTO> results = new ArrayList<>(request.items().size());
 
         Instant now = Instant.now();
         long expiresAtMs = now.plusSeconds(PRESIGNED_EXPIRE_SEC).toEpochMilli();
 
-        for (PhotoUploadInitItem item : request.items()) {
+        for (PhotoUploadInitItemDTO item : request.items()) {
             validateInitItem(item);
 
             LocalDateTime shotAt = resolveShotAt(item.clientLastModifiedMs());
@@ -86,20 +86,20 @@ public class PhotoUploadService {
 
             photo.updateImageKeys(prefix, originalKey, "TEMP", "TEMP");
 
-            results.add(new PhotoUploadInitResult(photo.getId(), originalKey, putUrl, expiresAtMs));
+            results.add(new PhotoUploadInitResultDTO(photo.getId(), originalKey, putUrl, expiresAtMs));
         }
 
-        return new PhotoUploadInitResponse(results);
+        return new PhotoUploadInitResponseDTO(results);
     }
 
-    public PhotoUploadCommitResponse commit(Long memberId, PhotoUploadCommitRequest request) {
+    public PhotoUploadCommitResponseDTO commit(Long memberId, PhotoUploadCommitRequestDTO request) {
         if (request == null || request.items() == null || request.items().isEmpty()) {
-            return new PhotoUploadCommitResponse(List.of());
+            return new PhotoUploadCommitResponseDTO(List.of());
         }
 
-        List<PhotoUploadCommitResult> results = new ArrayList<>(request.items().size());
+        List<PhotoUploadCommitResultDTO> results = new ArrayList<>(request.items().size());
 
-        for (PhotoUploadCommitItem item : request.items()) {
+        for (PhotoUploadCommitItemDTO item : request.items()) {
             validateCommitItem(item);
 
             Photo photo = photoRepository.findById(item.photoId())
@@ -169,13 +169,13 @@ public class PhotoUploadService {
                 }
             });
 
-            results.add(new PhotoUploadCommitResult(photo.getId(), previewUrl));
+            results.add(new PhotoUploadCommitResultDTO(photo.getId(), previewUrl));
         }
 
-        return new PhotoUploadCommitResponse(results);
+        return new PhotoUploadCommitResponseDTO(results);
     }
 
-    private void validateInitItem(PhotoUploadInitItem item) {
+    private void validateInitItem(PhotoUploadInitItemDTO item) {
         if (item == null) {
             throw new IllegalArgumentException("items 요소가 null 입니다.");
         }
@@ -190,7 +190,7 @@ public class PhotoUploadService {
         }
     }
 
-    private void validateCommitItem(PhotoUploadCommitItem item) {
+    private void validateCommitItem(PhotoUploadCommitItemDTO item) {
         if (item == null) {
             throw new IllegalArgumentException("items 요소가 null 입니다.");
         }
