@@ -51,6 +51,8 @@ public class Photo extends BaseEntity {
     @Column(columnDefinition = "TEXT")
     private String description;
 
+    private LocalDateTime deletedAt;
+
     @Builder
     public Photo(Member member,
                  LocalDateTime shotAt,
@@ -85,4 +87,9 @@ public class Photo extends BaseEntity {
 
     public String thumbnailKey() { return thumbnailKey; }
     public String previewKey()   { return previewKey; }
+
+    public void moveToTrash(LocalDateTime now) { this.deletedAt = now; }
+    public void restore() { this.deletedAt = null; }
+    public boolean isDeleted() { return deletedAt != null; }
+
 }
