@@ -167,6 +167,11 @@ public class FolderServiceImpl implements FolderService {
         // 요청자가 ADMIN인지 확인
         checkAdminRole(requester, folder);
 
+        // 자기 자신 초대 방지
+        if(requestMemberId.equals(request.memberId())) {
+            throw new ForbiddenException("자기 자신을 초대할 수 없습니다.");
+        }
+
         // 초대할 멤버 조회
         Member targetMember = findMember(request.memberId());
 
