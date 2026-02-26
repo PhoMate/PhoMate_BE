@@ -6,6 +6,6 @@ public record FolderInvitationResponseDTO(
         Long folderMemberId,
         Long folderId,
         String folderName,
-        Long invitedByMemberIf,
+        Long invitedByMemberId,
         FolderRole role
 ) {}
