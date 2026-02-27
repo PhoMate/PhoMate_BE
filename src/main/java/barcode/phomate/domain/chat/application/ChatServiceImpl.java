@@ -7,14 +7,13 @@ import barcode.phomate.domain.chat.domain.repository.ChatSessionRepository;
 import barcode.phomate.domain.chat.dto.ChatSearchStreamRequestDTO;
 import barcode.phomate.domain.chat.dto.ChatSendResponseDTO;
 import barcode.phomate.domain.chat.dto.ChatStreamRequestDTO;
+import barcode.phomate.domain.chat.dto.PhotoSearchItemDTO;
 import barcode.phomate.domain.edit.application.EditService;
 import barcode.phomate.domain.edit.domain.entity.EditVersion;
 import barcode.phomate.domain.member.domain.entity.Member;
 import barcode.phomate.domain.member.domain.repository.MemberRepository;
+import barcode.phomate.domain.photo.domain.entity.Photo;
 import barcode.phomate.domain.photo.domain.repository.PhotoRepository;
-import barcode.phomate.domain.post.domain.entity.Post;
-import barcode.phomate.domain.post.domain.repository.PostRepository;
-import barcode.phomate.domain.post.dto.PostResponseDTO;
 import barcode.phomate.global.exception.ForbiddenException;
 import barcode.phomate.global.exception.NotFoundException;
 import barcode.phomate.global.fastapi.client.SearchWorkerClient;
@@ -379,7 +378,7 @@ public class ChatServiceImpl implements ChatService {
                                 TextSearchRequestDTO reqDto = new TextSearchRequestDTO(
                                         newQuery,
                                         SEARCH_TOP_K,
-                                        null,
+                                        memberId,
                                         null,
                                         null
                                 );
@@ -390,9 +389,9 @@ public class ChatServiceImpl implements ChatService {
                                         ? List.of()
                                         : sr.hits().stream().map(h -> h.postId()).filter(Objects::nonNull).toList();
 
-                                List<PostResponseDTO> items = toThumbFeedByOrderedIds(orderedIds);
-
+                                List<PhotoSearchItemDTO> items = toPhotoFeedByOrderedIds(orderedIds);
                                 return new SearchContext(plan, items);
+
                             });
 
 
@@ -410,14 +409,19 @@ public class ChatServiceImpl implements ChatService {
                     // LLM: reason streaming (delta)
                     Flux<ServerSentEvent<String>> reasonDeltaFlux = searchCtxMono.flatMapMany(sc -> {
 
-                        List<String> topTitles = sc.items().stream()
+                        List<String> topSummaries = sc.items().stream()
                                 .limit(5)
-                                .map(PostResponseDTO::getTitle)
-                                .filter(t -> t != null && !t.isBlank())
+                                .map(PhotoSearchItemDTO::description)
+                                .filter(d -> d != null && !d.isBlank())
                                 .toList();
 
                         String reasonSystem = buildReasonSystemPrompt();
-                        String reasonUser = buildReasonUserPrompt(request.getUserText(), sc.plan().query(), topTitles);
+                        String reasonUser = buildReasonUserPrompt(
+                                request.getUserText(),
+                                sc.plan().query(),
+                                topSummaries
+                        );
+
 
                         StringBuilder assistantAcc = new StringBuilder();
                         AtomicInteger deltaCount = new AtomicInteger(0);
@@ -502,7 +506,9 @@ public class ChatServiceImpl implements ChatService {
 
     private record SearchPlan(String query) {}
 
-    private record SearchContext(SearchPlan plan, List<PostResponseDTO> items) {}
+    private record SearchContext(SearchPlan plan, List<PhotoSearchItemDTO> items) {}
+
+
 
     private String buildQueryPlannerPrompt() {
         return """
@@ -533,10 +539,11 @@ public class ChatServiceImpl implements ChatService {
 """;
     }
 
-    private String buildReasonUserPrompt(String userText, String query, List<String> topTitles) {
-        String titlesBlock = topTitles.isEmpty()
-                ? "(제목 정보 없음)"
-                : String.join("\n- ", topTitles);
+    private String buildReasonUserPrompt(String userText, String query, List<String> summaries) {
+
+        String block = summaries.isEmpty()
+                ? "(설명 정보 없음)"
+                : String.join("\n- ", summaries);
 
         return """
 [사용자 요청]
@@ -545,26 +552,35 @@ public class ChatServiceImpl implements ChatService {
 [생성한 검색 쿼리]
 """ + query + """
 
-[검색 결과 요약(상위 결과 제목)]
-- """ + titlesBlock + """
+[검색 결과 요약(상위 결과 설명)]
+- """ + block + """
 """;
     }
 
-    private List<PostResponseDTO> toThumbFeedByOrderedIds(List<Long> orderedPostIds) {
-        if (orderedPostIds == null || orderedPostIds.isEmpty()) return List.of();
 
-        List<Post> posts = postRepository.findByIdIn(orderedPostIds);
-        Map<Long, Post> byId = posts.stream().collect(Collectors.toMap(Post::getId, p -> p));
+    private List<PhotoSearchItemDTO> toPhotoFeedByOrderedIds(List<Long> orderedPhotoIds) {
+        if (orderedPhotoIds == null || orderedPhotoIds.isEmpty()) return List.of();
 
-        return orderedPostIds.stream()
+        List<Photo> photos = photoRepository.findByIdIn(orderedPhotoIds);
+
+        Map<Long, Photo> byId = photos.stream()
+                .collect(Collectors.toMap(Photo::getId, p -> p));
+
+        return orderedPhotoIds.stream()
                 .map(byId::get)
                 .filter(Objects::nonNull)
-                .map(p -> PostResponseDTO.of(
+                .filter(p -> p.getPreviewKey() != null && !p.getPreviewKey().isBlank())
+                .filter(p -> p.getThumbnailKey() != null && !p.getThumbnailKey().isBlank())
+                .filter(p -> !"TEMP".equals(p.getPreviewKey()))
+                .filter(p -> !"TEMP".equals(p.getThumbnailKey()))
+                .filter(p -> !"TEMP".equals(p.getOriginalKey()))
+                .filter(p -> p.getDeletedAt() == null)
+                .map(p -> new PhotoSearchItemDTO(
                         p.getId(),
-                        p.getTitle(),
                         cloudFrontBaseUrl + "/" + p.getThumbnailKey(),
-                        p.getLikeCount(),
-                        false
+                        cloudFrontBaseUrl + "/" + p.getPreviewKey(),
+                        p.getShotAt() == null ? null : p.getShotAt().toString(),
+                        p.getDescription()
                 ))
                 .toList();
     }
