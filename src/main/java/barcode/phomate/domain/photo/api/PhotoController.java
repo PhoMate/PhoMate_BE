@@ -1,6 +1,7 @@
 package barcode.phomate.domain.photo.api;
 
 import barcode.phomate.domain.photo.application.PhotoService;
+import barcode.phomate.domain.photo.dto.PhotoDetailResponseDTO;
 import barcode.phomate.domain.photo.dto.PhotoFeedResponseDTO;
 import io.swagger.v3.oas.annotations.Operation;
 import lombok.RequiredArgsConstructor;
@@ -94,5 +95,14 @@ public class PhotoController {
     ) {
         PhotoFeedResponseDTO res = photoService.getTrashLatest(cursorDeletedAt, cursorId, size, memberId);
         return ResponseEntity.ok(res);
+    }
+
+    @GetMapping("/{photoId}")
+    @Operation(summary = "사진 상세 조회", description = "사진 상세 조회 API")
+    public ResponseEntity<PhotoDetailResponseDTO> getPhotoDetail(
+            @PathVariable Long photoId,
+            @AuthenticationPrincipal Long memberId
+    ) {
+        return ResponseEntity.ok(photoService.getPhotoDetail(photoId, memberId));
     }
 }
