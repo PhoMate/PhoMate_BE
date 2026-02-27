@@ -44,4 +44,5 @@ public interface PhotoRepository extends JpaRepository<Photo, Long> {
             @Param("cursorId") Long cursorId,
             Pageable pageable
     );
+    List<Photo> findByIdIn(List<Long> photoIds);
 }
