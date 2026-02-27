@@ -11,6 +11,7 @@ import barcode.phomate.domain.edit.application.EditService;
 import barcode.phomate.domain.edit.domain.entity.EditVersion;
 import barcode.phomate.domain.member.domain.entity.Member;
 import barcode.phomate.domain.member.domain.repository.MemberRepository;
+import barcode.phomate.domain.photo.domain.repository.PhotoRepository;
 import barcode.phomate.domain.post.domain.entity.Post;
 import barcode.phomate.domain.post.domain.repository.PostRepository;
 import barcode.phomate.domain.post.dto.PostResponseDTO;
@@ -49,7 +50,7 @@ public class ChatServiceImpl implements ChatService {
     private final EditService editService;
     private final WebClient openAiWebClient;
     private final SearchWorkerClient searchWorkerClient;
-    private final PostRepository postRepository;
+    private final PhotoRepository photoRepository;
 
     private static final int SEARCH_TOP_K = 50;
 
