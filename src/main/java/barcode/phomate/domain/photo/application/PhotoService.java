@@ -4,6 +4,7 @@ import barcode.phomate.domain.member.domain.entity.Member;
 import barcode.phomate.domain.member.domain.repository.MemberRepository;
 import barcode.phomate.domain.photo.domain.entity.Photo;
 import barcode.phomate.domain.photo.domain.repository.PhotoRepository;
+import barcode.phomate.domain.photo.dto.PhotoDetailResponseDTO;
 import barcode.phomate.domain.photo.dto.PhotoFeedResponseDTO;
 import barcode.phomate.domain.photo.dto.PhotoResponseDTO;
 import barcode.phomate.global.exception.ForbiddenException;
@@ -303,7 +304,7 @@ public class PhotoService {
                         p.getId(),
                         cloudFrontBaseUrl + "/" + p.getThumbnailKey(),
                         cloudFrontBaseUrl + "/" + p.getPreviewKey(),
-                        p.getShotAt().toString()
+                        p.getShotAt()
                 ))
                 .toList();
 
@@ -334,7 +335,7 @@ public class PhotoService {
                         p.getId(),
                         cloudFrontBaseUrl + "/" + p.getThumbnailKey(),
                         cloudFrontBaseUrl + "/" + p.getPreviewKey(),
-                        p.getShotAt().toString()
+                        p.getShotAt()
                 ))
                 .toList();
 
@@ -344,6 +345,24 @@ public class PhotoService {
 
         boolean hasNext = photos.size() == pageSize;
         return PhotoFeedResponseDTO.of(items, nextCursor, hasNext);
+    }
+
+    @Transactional(readOnly = true)
+    public PhotoDetailResponseDTO getPhotoDetail(Long photoId, Long memberId) {
+
+        Photo photo = photoRepository.findById(photoId).orElseThrow(
+                () -> new NotFoundException("사진이 존재하지 않습니다.")
+        );
+
+        String originalUrl = cloudFrontBaseUrl + "/" + photo.getOriginalKey();
+
+        Member author = photo.getMember();
+
+        return PhotoDetailResponseDTO.of(
+                photo.getId(),
+                originalUrl,
+                photo.getShotAt()
+        );
     }
 
 
