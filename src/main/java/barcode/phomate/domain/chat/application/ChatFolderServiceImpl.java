@@ -61,8 +61,11 @@ public class ChatFolderServiceImpl implements ChatFolderService {
 
     // 1. 미리보기 : 자연어 -> GPT 키워드 추출 -> FastAPI 벡터 검색
     @Override
-    @Transactional(readOnly = true)
     public ChatFolderPreviewResponseDTO preview(Long memberId, ChatFolderPreviewRequestDTO request) {
+
+        log.info("[preview] memberId={}", memberId);
+        log.info("[preview] chatSessionId={}", request.chatSessionId());
+        log.info("[preview] userText={}", request.userText());
 
         // 세션 검증
         ChatSession session = chatSessionRepository.findById(request.chatSessionId())
@@ -87,10 +90,15 @@ public class ChatFolderServiceImpl implements ChatFolderService {
         );
         List<SearchHitDTO> hits = searchWorkerClient.searchText(searchReq).hits();
 
+        log.info("[preview] raw hits size={}", hits.size());
+        log.info("[preview] raw hits={}", hits);
+
         // 3. 공유폴더에 속한 photoId 목록 조회 (제외용)
         Set<Long> sharedPhotoIds = Set.copyOf(
                 photoFolderRepository.findSharedFolderPhotoIdsByMemberId(memberId)
         );
+
+        log.info("[preview] sharedPhotoIds={}", sharedPhotoIds);
 
         // 4. threshold 필터 + 공유폴더 사진 제외
         List<Long> filteredIds = hits.stream()
@@ -99,8 +107,14 @@ public class ChatFolderServiceImpl implements ChatFolderService {
                 .map(SearchHitDTO::postId)
                 .toList();
 
+        log.info("[preview] filteredIds={}", filteredIds);
+
         // 5. photoId로 Photo 조회 -> PhotoInfoDTO 변환
         List<Photo> photos = photoRepository.findAllById(filteredIds);
+
+        log.info("[preview] photos size={}", photos.size());
+        log.info("[preview] photos={}", photos.stream().map(Photo::getId).toList());
+
         List<PhotoInfoDTO> photoInfos = photos.stream()
                 .map(p -> new PhotoInfoDTO(
                         p.getId(),
