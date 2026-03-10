@@ -196,6 +196,7 @@ public class ChatFolderServiceImpl implements ChatFolderService {
         }
         }
 
+    // GPT 시스템 프롬프트 생성
     private String buildKeywordExtractPrompt() {
         return """
                 너는 사진 폴더 검색 서비스의 키워드 추출기다.
@@ -215,6 +216,7 @@ public class ChatFolderServiceImpl implements ChatFolderService {
                 """;
     }
 
+    // GPT의 문맥 유지를 위해서
     private String buildKeywordExtractInput(String currentQuery, String userText) {
         if (currentQuery == null || currentQuery.isBlank()) {
             return "[사용자 요청]\n" + userText;
@@ -222,6 +224,7 @@ public class ChatFolderServiceImpl implements ChatFolderService {
         return "[이전 검색 상태]\n" + currentQuery + "\n\n[사용자 요청]\n" + userText;
     }
 
+    // GPT 응답에서 content 추출
     private String extractAssistantContent(String json) {
         try {
             JsonNode root = mapper.readTree(json);
@@ -231,6 +234,7 @@ public class ChatFolderServiceImpl implements ChatFolderService {
         }
     }
 
+    // 키워드 값 파싱
     private String parseKeywordJson(String content) {
         try {
             JsonNode node = mapper.readTree(content);
