@@ -11,6 +11,7 @@ import barcode.phomate.domain.folder.dto.FolderMemberRoleResponseDTO;
 import barcode.phomate.domain.folder.dto.FolderResponseDTO;
 import barcode.phomate.domain.folder.dto.FolderRoleUpdateRequestDTO;
 import barcode.phomate.domain.folder.dto.FolderUpdateRequestDTO;
+import barcode.phomate.domain.photo.dto.PhotoFeedResponseDTO;
 import io.swagger.v3.oas.annotations.Operation;
 import lombok.RequiredArgsConstructor;
 import org.springframework.format.annotation.DateTimeFormat;
@@ -151,5 +152,18 @@ public class FolderController {
             @RequestParam(defaultValue = "20") int size
     ) {
         return ResponseEntity.ok(folderService.getFolderFeed(memberId, cursorCreatedAt, cursorId, size));
+    }
+
+    @GetMapping("/{folderId}/photos/feed")
+    @Operation(summary = "폴더 안 사진 무한스크롤", description = "폴더 내 사진 커서 기반 무한스크롤 API")
+    public ResponseEntity<PhotoFeedResponseDTO> getFolderPhotoFeed(
+            @AuthenticationPrincipal Long memberId,
+            @PathVariable Long folderId,
+            @RequestParam(required = false) String cursorShotAt,
+            @RequestParam(required = false) Long cursorId,
+            @RequestParam(defaultValue = "20") int size) {
+        return ResponseEntity.ok(folderService.getFolderPhotoFeed(memberId, folderId,
+                cursorShotAt == null ? null : LocalDateTime.parse(cursorShotAt),
+                cursorId, size));
     }
 }
