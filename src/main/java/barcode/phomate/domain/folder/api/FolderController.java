@@ -3,6 +3,7 @@ package barcode.phomate.domain.folder.api;
 import barcode.phomate.domain.folder.application.FolderService;
 import barcode.phomate.domain.folder.dto.FolderCreateRequestDTO;
 import barcode.phomate.domain.folder.dto.FolderDetailResponseDTO;
+import barcode.phomate.domain.folder.dto.FolderFeedResponseDTO;
 import barcode.phomate.domain.folder.dto.FolderInvitationReplyRequestDTO;
 import barcode.phomate.domain.folder.dto.FolderInvitationResponseDTO;
 import barcode.phomate.domain.folder.dto.FolderInviteRequestDTO;
@@ -12,6 +13,7 @@ import barcode.phomate.domain.folder.dto.FolderRoleUpdateRequestDTO;
 import barcode.phomate.domain.folder.dto.FolderUpdateRequestDTO;
 import io.swagger.v3.oas.annotations.Operation;
 import lombok.RequiredArgsConstructor;
+import org.springframework.format.annotation.DateTimeFormat;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.DeleteMapping;
@@ -21,7 +23,9 @@ import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
+import java.time.LocalDateTime;
 
 import java.net.URI;
 import java.util.List;
@@ -136,5 +140,16 @@ public class FolderController {
     ) {
         folderService.updateMemberRole(memberId, folderId, targetMemberId, request);
         return ResponseEntity.noContent().build();
+    }
+
+    @GetMapping("/feed")
+    @Operation(summary = "폴더 목록 무한스크롤", description = "내 폴더 + 초대 수락한 공유 폴더 커서 기반 무한스크롤 API")
+    public ResponseEntity<FolderFeedResponseDTO> getFolderFeed(
+            @AuthenticationPrincipal Long memberId,
+            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) LocalDateTime cursorCreatedAt,
+            @RequestParam(required = false) Long cursorId,
+            @RequestParam(defaultValue = "20") int size
+    ) {
+        return ResponseEntity.ok(folderService.getFolderFeed(memberId, cursorCreatedAt, cursorId, size));
     }
 }
