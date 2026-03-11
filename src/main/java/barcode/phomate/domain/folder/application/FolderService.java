@@ -2,6 +2,7 @@ package barcode.phomate.domain.folder.application;
 
 import barcode.phomate.domain.folder.dto.FolderCreateRequestDTO;
 import barcode.phomate.domain.folder.dto.FolderDetailResponseDTO;
+import barcode.phomate.domain.folder.dto.FolderFeedResponseDTO;
 import barcode.phomate.domain.folder.dto.FolderInvitationReplyRequestDTO;
 import barcode.phomate.domain.folder.dto.FolderInvitationResponseDTO;
 import barcode.phomate.domain.folder.dto.FolderInviteRequestDTO;
@@ -9,7 +10,9 @@ import barcode.phomate.domain.folder.dto.FolderMemberRoleResponseDTO;
 import barcode.phomate.domain.folder.dto.FolderResponseDTO;
 import barcode.phomate.domain.folder.dto.FolderRoleUpdateRequestDTO;
 import barcode.phomate.domain.folder.dto.FolderUpdateRequestDTO;
+import barcode.phomate.domain.photo.dto.PhotoFeedResponseDTO;
 
+import java.time.LocalDateTime;
 import java.util.List;
 
 public interface FolderService {
@@ -45,4 +48,11 @@ public interface FolderService {
 
     // 공유 폴더 권한 부여/변경
     void updateMemberRole(Long requestMemberId, Long folderId, Long targetMemberId, FolderRoleUpdateRequestDTO request);
+
+    // 무한스크롤
+    FolderFeedResponseDTO getFolderFeed(Long memberId, LocalDateTime cursorCreatedAt, Long cursorId, int size);
+
+    // 폴더 내 사진 무한스크롤
+    PhotoFeedResponseDTO getFolderPhotoFeed(Long memberId, Long folderId, LocalDateTime cursorShotAt, Long cursorId, int size);
+
 }

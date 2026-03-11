@@ -10,6 +10,7 @@ import barcode.phomate.domain.folder.domain.repository.FolderRepository;
 import barcode.phomate.domain.folder.domain.repository.PhotoFolderRepository;
 import barcode.phomate.domain.folder.dto.FolderCreateRequestDTO;
 import barcode.phomate.domain.folder.dto.FolderDetailResponseDTO;
+import barcode.phomate.domain.folder.dto.FolderFeedResponseDTO;
 import barcode.phomate.domain.folder.dto.FolderInvitationReplyRequestDTO;
 import barcode.phomate.domain.folder.dto.FolderInvitationResponseDTO;
 import barcode.phomate.domain.folder.dto.FolderInviteRequestDTO;
@@ -20,6 +21,8 @@ import barcode.phomate.domain.folder.dto.FolderUpdateRequestDTO;
 import barcode.phomate.domain.member.domain.entity.Member;
 import barcode.phomate.domain.member.domain.repository.MemberRepository;
 import barcode.phomate.domain.photo.domain.entity.Photo;
+import barcode.phomate.domain.photo.dto.PhotoFeedResponseDTO;
+import barcode.phomate.domain.photo.dto.PhotoResponseDTO;
 import barcode.phomate.global.exception.ForbiddenException;
 import barcode.phomate.global.exception.NotFoundException;
 import barcode.phomate.global.fastapi.application.EmbeddingAsyncService;
@@ -27,10 +30,14 @@ import barcode.phomate.global.s3.application.S3DeleteAsyncService;
 import barcode.phomate.global.tx.AfterCommitExecutor;
 import lombok.RequiredArgsConstructor;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.data.domain.PageRequest;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.time.LocalDateTime;
+import java.util.Comparator;
 import java.util.List;
+import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
 @Service
@@ -255,6 +262,83 @@ public class FolderServiceImpl implements FolderService {
                 targetMember.getNickname(),
                 folderMember.getRole()
         );
+    }
+
+    @Override
+    public FolderFeedResponseDTO getFolderFeed(Long memberId, LocalDateTime cursorCreatedAt, Long cursorId, int size) {
+
+        // size+1개 조회해서 다음 페이지 있는지 확인
+        PageRequest pageable = PageRequest.of(0, size + 1);
+
+        // 내 폴더 + 공유 폴더 각각 커서 조회
+        List<Folder> myFolders = folderRepository.findMyFoldersCursor(
+                memberId, cursorCreatedAt, cursorId, pageable);
+        List<Folder> sharedFolders = folderRepository.findSharedFoldersCursor(
+                memberId, cursorCreatedAt, cursorId, pageable);
+
+        // 합치고 createdAt desc, id desc 정렬
+        List<Folder> merged = Stream.concat(myFolders.stream(), sharedFolders.stream())
+                .collect(Collectors.toMap(
+                        Folder::getId,
+                        f -> f,
+                        (existing, duplicate) -> existing  // 중복이면 기존 것 유지
+                ))
+                .values()
+                .stream()
+                .sorted(Comparator.comparing(Folder::getCreatedAt).reversed()
+                        .thenComparing(Comparator.comparing(Folder::getId).reversed()))
+                .toList();
+
+        boolean hasNext = merged.size() > size;
+        List<Folder> paged = hasNext ? merged.subList(0, size) : merged;
+
+        if (paged.isEmpty()) return FolderFeedResponseDTO.empty();
+
+        // 마지막 항목 커서로 설정
+        Folder last = paged.get(paged.size() - 1);
+        FolderFeedResponseDTO.Cursor nextCursor = hasNext
+                ? new FolderFeedResponseDTO.Cursor(last.getCreatedAt(), last.getId())
+                : null;
+
+        List<FolderResponseDTO> items = paged.stream()
+                .map(FolderResponseDTO::from)
+                .toList();
+
+        return FolderFeedResponseDTO.of(items, nextCursor, hasNext);
+    }
+
+    @Override
+    public PhotoFeedResponseDTO getFolderPhotoFeed(Long memberId, Long folderId, LocalDateTime cursorShotAt, Long cursorId, int size) {
+
+        Member member = findMember(memberId);
+        Folder folder = findFolder(folderId);
+
+        // 접근 권한 확인 (소유자 or 초대 수락한 멤버)
+        checkReadAccess(member, folder);
+
+        int pageSize = Math.min(Math.max(size, 1), 50);
+        PageRequest pageable = PageRequest.of(0, pageSize);
+
+        List<PhotoFolder> photoFolders = photoFolderRepository.findByFolderCursor(
+                folderId, cursorShotAt, cursorId, pageable);
+
+        if (photoFolders.isEmpty()) return PhotoFeedResponseDTO.empty();
+
+        List<PhotoResponseDTO> items = photoFolders.stream()
+                .map(pf -> PhotoResponseDTO.of(
+                        pf.getPhoto().getId(),
+                        cloudFrontBaseUrl + "/" + pf.getPhoto().getThumbnailKey(),
+                        cloudFrontBaseUrl + "/" + pf.getPhoto().getPreviewKey(),
+                        pf.getPhoto().getShotAt()
+                ))
+                .toList();
+
+        Photo last = photoFolders.get(photoFolders.size() - 1).getPhoto();
+        PhotoFeedResponseDTO.Cursor nextCursor =
+                PhotoFeedResponseDTO.Cursor.latest(last.getShotAt().toString(), last.getId());
+
+        boolean hasNext = photoFolders.size() == pageSize;
+        return PhotoFeedResponseDTO.of(items, nextCursor, hasNext);
     }
 
     // 공유 폴더 권한 부여/변경
