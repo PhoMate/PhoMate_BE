@@ -5,7 +5,7 @@ import jakarta.validation.constraints.NotNull;
 
 public record FolderInviteRequestDTO(
         @NotNull
-        Long memberId,
+        String email,
         @NotNull
         FolderRole role
 ) {}

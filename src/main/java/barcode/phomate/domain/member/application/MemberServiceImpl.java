@@ -30,6 +30,7 @@ public class MemberServiceImpl implements MemberService {
                             Member.builder()
                                     .nickname(info.getName() != null ? info.getName() : "unknown")
                                     .profileImageUrl(info.getPicture())
+                                    .email(info.getEmail())
                                     .build()
                     );
 

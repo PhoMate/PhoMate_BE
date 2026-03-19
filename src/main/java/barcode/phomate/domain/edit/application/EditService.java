@@ -6,7 +6,7 @@ import org.springframework.web.multipart.MultipartFile;
 
 public interface EditService {
 
-    EditSession start(Long memberId, Long postId);
+    EditSession start(Long memberId, Long photoId);
 
     EditVersion getCurrentVersion(Long memberId, Long editSessionId);
 

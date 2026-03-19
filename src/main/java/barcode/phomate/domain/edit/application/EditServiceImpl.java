@@ -8,8 +8,8 @@ import barcode.phomate.domain.edit.domain.repository.EditSessionRepository;
 import barcode.phomate.domain.edit.domain.repository.EditVersionRepository;
 import barcode.phomate.domain.member.domain.entity.Member;
 import barcode.phomate.domain.member.domain.repository.MemberRepository;
-import barcode.phomate.domain.post.domain.entity.Post;
-import barcode.phomate.domain.post.domain.repository.PostRepository;
+import barcode.phomate.domain.photo.domain.entity.Photo;
+import barcode.phomate.domain.photo.domain.repository.PhotoRepository;
 import barcode.phomate.global.exception.BadRequestException;
 import barcode.phomate.global.exception.ForbiddenException;
 import barcode.phomate.global.exception.NotFoundException;
@@ -35,7 +35,7 @@ import java.util.List;
 @Transactional
 public class EditServiceImpl implements EditService{
 
-    private final PostRepository postRepository;
+    private final PhotoRepository photoRepository;
     private final MemberRepository memberRepository;
 
     private final EditSessionRepository editSessionRepository;
@@ -57,21 +57,21 @@ public class EditServiceImpl implements EditService{
 
     // 1. 편집 세션 시작
     @Override
-    public EditSession start(Long memberId, Long postId) {
+    public EditSession start(Long memberId, Long photoId) {
 
         Member member = memberRepository.findById(memberId)
                 .orElseThrow(()-> new NotFoundException("멤버를 찾을 수 없습니다."));
 
-        Post post = postRepository.findById(postId)
-                .orElseThrow(()-> new NotFoundException("게시물을 찾을 수 없습니다."));
+        Photo photo = photoRepository.findById(photoId)
+                .orElseThrow(()-> new NotFoundException("사진을 찾을 수 없습니다."));
 
         EditSession session = editSessionRepository.save(EditSession.builder()
                 .member(member)
-                .post(post)
+                .photo(photo)
                 .build());
 
         // 편집 전용 복사본 생성해 jpg로 확장자 두기
-        byte[] baseBytes = downloadBytes(cloudFrontUrl(post.getOriginalKey()));
+        byte[] baseBytes = downloadBytes(cloudFrontUrl(photo.getOriginalKey()));
         byte[] baseJpg = toJpgOrThrow(baseBytes);
 
         String key0 = sessionPrefix(session.getId()) + "/vo.jpg";
