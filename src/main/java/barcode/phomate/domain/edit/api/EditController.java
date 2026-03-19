@@ -36,9 +36,9 @@ public class EditController {
     @Operation(summary = "편집 세션 시작", description = "EditSession 시작")
     public ResponseEntity<Long> start(
             @AuthenticationPrincipal Long memberId,
-            @RequestParam Long postId
+            @RequestParam Long photoId
     ) {
-        EditSession session = editService.start(memberId, postId);
+        EditSession session = editService.start(memberId, photoId);
         return ResponseEntity.ok(session.getId());
     }
 

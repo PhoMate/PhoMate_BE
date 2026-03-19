@@ -1,7 +1,6 @@
 package barcode.phomate.domain.edit.domain.entity;
 
 import barcode.phomate.domain.member.domain.entity.Member;
-import barcode.phomate.domain.post.domain.entity.Post;
 import barcode.phomate.global.common.entity.BaseEntity;
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
@@ -20,6 +19,8 @@ import lombok.Getter;
 import lombok.NoArgsConstructor;
 import org.hibernate.annotations.OnDelete;
 import org.hibernate.annotations.OnDeleteAction;
+import barcode.phomate.domain.photo.domain.entity.Photo;
+
 
 @Entity
 @Getter
@@ -32,9 +33,9 @@ public class EditSession extends BaseEntity {
     private Long id;
 
     @ManyToOne(fetch = FetchType.LAZY, optional = false)
-    @JoinColumn(name = "post_id", nullable = false)
+    @JoinColumn(name = "photo_id", nullable = false)
     @OnDelete(action = OnDeleteAction.CASCADE)
-    private Post post;
+    private Photo photo;
 
     @ManyToOne(fetch = FetchType.LAZY, optional = false)
     @JoinColumn(name = "member_id", nullable = false)
@@ -50,8 +51,8 @@ public class EditSession extends BaseEntity {
     private int currentIndex;
 
     @Builder
-    public EditSession(Post post, Member member) {
-        this.post = post;
+    public EditSession(Photo photo, Member member) {
+        this.photo = photo;
         this.member = member;
         this.status = EditSessionStatus.ACTIVE;
         this.currentIndex = 0;
