@@ -174,13 +174,13 @@ public class FolderServiceImpl implements FolderService {
         // 요청자가 ADMIN인지 확인
         checkAdminRole(requester, folder);
 
+        Member targetMember = memberRepository.findByEmail(request.email())
+                .orElseThrow(() -> new NotFoundException("가입되지 않은 사용자입니다."));
+
         // 자기 자신 초대 방지
-        if(requestMemberId.equals(request.memberId())) {
+        if(requestMemberId.equals(targetMember.getId())) {
             throw new ForbiddenException("자기 자신을 초대할 수 없습니다.");
         }
-
-        // 초대할 멤버 조회
-        Member targetMember = findMember(request.memberId());
 
         // 이미 초대된 멤버인지 확인(수락 여부랑은 상관 x)
         folderMemberRepository.findByMemberAndFolder(targetMember, folder).ifPresent(fm -> {

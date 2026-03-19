@@ -22,9 +22,13 @@ public class Member extends BaseEntity {
     @Column(length = 2048)
     private String profileImageUrl;
 
+    @Column(unique = true, length = 100)
+    private String email;
+
     @Builder
-    public Member(String nickname, String profileImageUrl) {
+    public Member(String nickname, String profileImageUrl, String email) {
         this.nickname = nickname;
         this.profileImageUrl = profileImageUrl;
+        this.email = email;
     }
 }
