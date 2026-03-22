@@ -42,7 +42,7 @@ import java.util.Set;
 public class ChatFolderServiceImpl implements ChatFolderService {
 
     private static final int MAX_TOP_K = 50;
-    private static final double SCORE_THRESHOLD = 0.5;
+    private static final double SCORE_THRESHOLD = 0.2;
 
     private final WebClient openAiWebClient;
     private final SearchWorkerClient searchWorkerClient;
