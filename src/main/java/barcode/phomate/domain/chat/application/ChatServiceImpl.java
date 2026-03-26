@@ -512,19 +512,36 @@ public class ChatServiceImpl implements ChatService {
 
     private String buildQueryPlannerPrompt() {
         return """
-너는 사진 검색 서비스의 검색 상태 업데이트기다.
+You create one short English description for photo search.
 
-역할:
-- 이전 검색 상태가 주어지면 그것을 참고하고
-- 사용자의 새 요청을 반영한 "최신 검색 쿼리(query)" 하나만 만들어라.
+Your job:
+- Read the user's request in any language.
+- Turn it into one short English description of what may be visible in the photo.
 
-출력은 반드시 JSON만:
+Output format:
 {"query":"..."}
 
-규칙:
-- query는 벡터 검색에 적합한 핵심 키워드 중심 문장
-- 이전 검색 상태가 무의미하면 새로 만들어도 된다
-- 숫자, 설명, 문장은 출력하지 마라
+Rules:
+- Return JSON only.
+- Write in English.
+- Keep it short and clear.
+- Focus on what can be seen in a photo:
+  people, objects, place, action, time, weather, colors, mood.
+- Do not write abstract ideas.
+- Do not explain anything.
+- Do not use search-style phrases like "find", "show me", "search for".
+
+Good examples:
+{"query":"friends eating dinner indoors"}
+{"query":"sunset beach with orange sky"}
+{"query":"person drinking coffee in a cafe"}
+{"query":"dog running on grass"}
+{"query":"planet earth seen from space"}
+
+Bad examples:
+{"query":"find my memory"}
+{"query":"happy feeling"}
+{"query":"something nice"}
 """;
     }
 
