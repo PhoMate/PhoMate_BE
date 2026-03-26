@@ -17,6 +17,8 @@ import lombok.AccessLevel;
 import lombok.Builder;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
+import org.hibernate.annotations.OnDelete;
+import org.hibernate.annotations.OnDeleteAction;
 
 @Entity
 @Getter
@@ -32,6 +34,7 @@ public class EditVersion extends BaseEntity {
     // 어떤 EditSession에 속한 버전인지
     @ManyToOne(fetch = FetchType.LAZY, optional = false)
     @JoinColumn(name = "edit_session_id", nullable = false)
+    @OnDelete(action = OnDeleteAction.CASCADE)
     private EditSession editSession;
 
     // 버전 인덱스
