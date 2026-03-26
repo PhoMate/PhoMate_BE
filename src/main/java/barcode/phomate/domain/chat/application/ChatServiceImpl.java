@@ -602,19 +602,9 @@ Bad examples:
                 .toList();
     }
 
-    private String buildQueryPlannerUserInput(String currentQuery, String userText) {
-
-        if (currentQuery == null || currentQuery.isBlank()) {
-            return """
-[사용자 요청]
-""" + userText;
-        }
-
+    private String buildQueryPlannerUserInput(String userText) {
         return """
-[이전 검색 상태]
-""" + currentQuery + """
-
-[사용자 추가 요청]
+User request:
 """ + userText;
     }
 
