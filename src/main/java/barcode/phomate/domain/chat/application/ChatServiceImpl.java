@@ -563,22 +563,32 @@ Bad examples:
 """;
     }
 
-    private String buildReasonUserPrompt(String userText, String query, List<String> summaries) {
-
-        String block = summaries.isEmpty()
-                ? "(설명 정보 없음)"
-                : String.join("\n- ", summaries);
-
+    private String buildReasonUserPrompt(String userText, String query) {
         return """
 [사용자 요청]
-""" + userText + """
+%s
 
-[생성한 검색 쿼리]
-""" + query + """
+[내부 검색 표현]
+%s
 
-[검색 결과 요약(상위 결과 설명)]
-- """ + block + """
-""";
+사용자에게 짧고 자연스럽게 한 번에 답하라.
+
+규칙:
+- 2~3문장 이하로 작성한다.
+- 말하듯이 자연스럽게 이어서 작성한다.
+- 원하는 결과가 나왔는지 가볍게 묻는다.
+- 부족하다면 사진에 보이는 장면을 조금 더 자세히 말해달라고 안내한다.
+- 사람, 장소, 행동 같은 쉬운 예시를 자연스럽게 포함한다.
+- 단계나 번호를 나누지 않는다.
+
+예시:
+
+예시 1:
+원하는 결과가 나오셨나요? 아직 찾는 사진이 아니라면 사진에 보이는 장면을 조금 더 자세히 말씀해 주세요. 예를 들어 어디에서 찍었는지, 누가 있었는지, 무엇을 하고 있었는지를 함께 말해주시면 더 잘 찾을 수 있어요.
+
+예시 2:
+원하는 사진이 보이시나요? 아니라면 사진 속 상황을 조금 더 구체적으로 말씀해 주세요. 예를 들어 바다에서 노을을 본 장면이나 카페에서 커피를 마시는 모습처럼 표현해주시면 더 정확하게 찾을 수 있어요.
+""".formatted(userText, query);
     }
 
 
