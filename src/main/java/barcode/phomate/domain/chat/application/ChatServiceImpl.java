@@ -340,7 +340,7 @@ public class ChatServiceImpl implements ChatService {
                     ChatSession session = ctx.session();
                     ChatMessage userMsg = ctx.userMsg();
 
-                    // LLM: query planner
+                    // 1) LLM: 검색용 영어 표현 생성
                     Mono<SearchPlan> planMono = openAiWebClient.post()
                             .uri("/chat/completions")
                             .contentType(MediaType.APPLICATION_JSON)
@@ -351,32 +351,33 @@ public class ChatServiceImpl implements ChatService {
                                             Map.of("role", "system", "content", buildQueryPlannerPrompt()),
                                             Map.of(
                                                     "role", "user",
-                                                    "content", buildQueryPlannerUserInput(
-                                                            session.getCurrentSearchQuery(),
-                                                            request.getUserText()
-                                                    )
+                                                    "content", buildQueryPlannerUserInput(request.getUserText())
                                             )
                                     )
                             ))
                             .retrieve()
+                            .onStatus(
+                                    status -> status.is4xxClientError() || status.is5xxServerError(),
+                                    response -> response.bodyToMono(String.class)
+                                            .defaultIfEmpty("")
+                                            .flatMap(body -> {
+                                                log.error("[SEARCH QUERY PLANNER OPENAI ERROR] status={} body={}",
+                                                        response.statusCode(), body);
+                                                return Mono.error(new RuntimeException("OpenAI query planner error: " + response.statusCode()));
+                                            })
+                            )
                             .bodyToMono(String.class)
                             .map(this::extractAssistantContentFromChatCompletionsJson)
-                            .map(this::parseSearchPlanJsonSafely);
+                            .map(this::parseSearchPlanJsonSafely)
+                            .map(plan -> new SearchPlan(normalizeSiglipQuery(plan.query())));
 
-
-                    // FastAPI: vector search (동기이므로 boundedElastic에서)
+                    // 2) FastAPI: vector search
                     Mono<SearchContext> searchCtxMono = planMono
                             .publishOn(Schedulers.boundedElastic())
                             .map(plan -> {
 
-                                String newQuery = plan.query();
-
-                                // 검색 상태 갱신
-                                session.updateSearchQuery(newQuery);
-                                chatSessionRepository.save(session);
-
                                 TextSearchRequestDTO reqDto = new TextSearchRequestDTO(
-                                        newQuery,
+                                        plan.query(),
                                         SEARCH_TOP_K,
                                         memberId,
                                         null,
@@ -387,15 +388,21 @@ public class ChatServiceImpl implements ChatService {
 
                                 List<Long> orderedIds = (sr == null || sr.hits() == null)
                                         ? List.of()
-                                        : sr.hits().stream().map(h -> h.postId()).filter(Objects::nonNull).toList();
+                                        : sr.hits().stream()
+                                        .map(h -> h.postId())
+                                        .filter(Objects::nonNull)
+                                        .toList();
 
                                 List<PhotoSearchItemDTO> items = toPhotoFeedByOrderedIds(orderedIds);
-                                return new SearchContext(plan, items);
 
+                                log.info("[SEARCH STREAM] sessionId={} userMsgId={} userText='{}' plannedQuery='{}' hitCount={} itemCount={}",
+                                        session.getId(), userMsg.getId(), request.getUserText(), plan.query(),
+                                        orderedIds.size(), items.size());
+
+                                return new SearchContext(plan, items);
                             });
 
-
-                    // SSE: results 1번 먼저 보내기
+                    // 3) 검색 결과 먼저 전송
                     Flux<ServerSentEvent<String>> resultsEventFlux = searchCtxMono.flatMapMany(sc -> {
                         String payloadJson = toJsonSafely(Map.of("items", sc.items()));
                         return Flux.just(
@@ -406,25 +413,19 @@ public class ChatServiceImpl implements ChatService {
                         );
                     });
 
-                    // LLM: reason streaming (delta)
+                    // 4) 결과 보여준 뒤, 짧은 한국어 안내 문구 스트리밍
                     Flux<ServerSentEvent<String>> reasonDeltaFlux = searchCtxMono.flatMapMany(sc -> {
-
-                        List<String> topSummaries = sc.items().stream()
-                                .limit(5)
-                                .map(PhotoSearchItemDTO::description)
-                                .filter(d -> d != null && !d.isBlank())
-                                .toList();
 
                         String reasonSystem = buildReasonSystemPrompt();
                         String reasonUser = buildReasonUserPrompt(
                                 request.getUserText(),
-                                sc.plan().query(),
-                                topSummaries
+                                sc.plan().query()
                         );
-
 
                         StringBuilder assistantAcc = new StringBuilder();
                         AtomicInteger deltaCount = new AtomicInteger(0);
+                        AtomicInteger dataLineCount = new AtomicInteger(0);
+                        AtomicInteger doneCount = new AtomicInteger(0);
 
                         Flux<String> textFlux =
                                 openAiWebClient.post()
@@ -440,12 +441,27 @@ public class ChatServiceImpl implements ChatService {
                                                 )
                                         ))
                                         .retrieve()
+                                        .onStatus(
+                                                status -> status.is4xxClientError() || status.is5xxServerError(),
+                                                response -> response.bodyToMono(String.class)
+                                                        .defaultIfEmpty("")
+                                                        .flatMap(body -> {
+                                                            log.error("[SEARCH REASON OPENAI ERROR] status={} body={}",
+                                                                    response.statusCode(), body);
+                                                            return Mono.error(new RuntimeException("OpenAI reason error: " + response.statusCode()));
+                                                        })
+                                        )
                                         .bodyToFlux(String.class)
                                         .flatMap(raw -> Flux.fromArray(raw.split("\n")))
                                         .map(String::trim)
                                         .filter(line -> !line.isBlank())
                                         .map(this::normalizeOpenAiStreamPayload)
                                         .filter(data -> data != null && !data.isBlank())
+                                        .doOnNext(data -> {
+                                            dataLineCount.incrementAndGet();
+                                            if ("[DONE]".equals(data)) doneCount.incrementAndGet();
+                                            log.debug("[SEARCH REASON DATA] {}", data);
+                                        })
                                         .filter(data -> !data.equals("[DONE]"))
                                         .map(this::readTreeSafely)
                                         .filter(n -> !n.isMissingNode())
@@ -454,21 +470,34 @@ public class ChatServiceImpl implements ChatService {
                                             JsonNode contentNode = delta.path("content");
                                             if (contentNode.isTextual()) {
                                                 String text = contentNode.asText();
-                                                if (text != null && !text.isEmpty()) sink.next(text);
+                                                if (text != null && !text.isEmpty()) {
+                                                    sink.next(text);
+                                                }
+                                            } else {
+                                                log.debug("[SEARCH REASON DELTA NO-CONTENT] delta={}", delta);
                                             }
                                         })
                                         .cast(String.class)
                                         .doOnNext(t -> deltaCount.incrementAndGet());
 
-                        // delta -> SSE + 누적
                         return textFlux
                                 .map(t -> {
                                     assistantAcc.append(t);
-                                    return ServerSentEvent.<String>builder().event("delta").data(t).build();
+                                    return ServerSentEvent.<String>builder()
+                                            .event("delta")
+                                            .data(t)
+                                            .build();
                                 })
                                 .doFinally(sig -> {
-                                    // reason 저장 (assistant message)
-                                    if (assistantAcc.length() == 0) return;
+                                    log.info("[SEARCH REASON END] sig={} sessionId={} userMsgId={} dataLineCount={} doneCount={} deltaCount={} accLen={}",
+                                            sig, session.getId(), userMsg.getId(),
+                                            dataLineCount.get(), doneCount.get(), deltaCount.get(), assistantAcc.length());
+
+                                    if (assistantAcc.length() == 0) {
+                                        log.warn("[SEARCH ASSIST SAVE SKIP] sig={} accLen=0 sessionId={} userMsgId={}",
+                                                sig, session.getId(), userMsg.getId());
+                                        return;
+                                    }
 
                                     Schedulers.boundedElastic().schedule(() -> {
                                         try {
@@ -477,6 +506,7 @@ public class ChatServiceImpl implements ChatService {
                                                     .parent(userMsg)
                                                     .content(assistantAcc.toString())
                                                     .build());
+
                                             log.info("[SEARCH ASSIST SAVED] sessionId={} userMsgId={} accLen={} deltaCount={} sig={}",
                                                     session.getId(), userMsg.getId(), assistantAcc.length(), deltaCount.get(), sig);
                                         } catch (Exception e) {
@@ -487,11 +517,16 @@ public class ChatServiceImpl implements ChatService {
                                 });
                     });
 
-                    // 전체 SSE 조립: results -> delta 스트림 -> done
+                    // 5) 전체 SSE 조립
                     return Flux.concat(
                                     resultsEventFlux,
                                     reasonDeltaFlux,
-                                    Flux.just(ServerSentEvent.<String>builder().event("done").data("ok").build())
+                                    Flux.just(
+                                            ServerSentEvent.<String>builder()
+                                                    .event("done")
+                                                    .data("ok")
+                                                    .build()
+                                    )
                             )
                             .onErrorResume(e -> {
                                 log.error("[SEARCH STREAM ERROR] sessionId={} userMsgId={}",
@@ -512,19 +547,36 @@ public class ChatServiceImpl implements ChatService {
 
     private String buildQueryPlannerPrompt() {
         return """
-너는 사진 검색 서비스의 검색 상태 업데이트기다.
+You create one short English description for photo search.
 
-역할:
-- 이전 검색 상태가 주어지면 그것을 참고하고
-- 사용자의 새 요청을 반영한 "최신 검색 쿼리(query)" 하나만 만들어라.
+Your job:
+- Read the user's request in any language.
+- Turn it into one short English description of what may be visible in the photo.
 
-출력은 반드시 JSON만:
+Output format:
 {"query":"..."}
 
-규칙:
-- query는 벡터 검색에 적합한 핵심 키워드 중심 문장
-- 이전 검색 상태가 무의미하면 새로 만들어도 된다
-- 숫자, 설명, 문장은 출력하지 마라
+Rules:
+- Return JSON only.
+- Write in English.
+- Keep it short and clear.
+- Focus on what can be seen in a photo:
+  people, objects, place, action, time, weather, colors, mood.
+- Do not write abstract ideas.
+- Do not explain anything.
+- Do not use search-style phrases like "find", "show me", "search for".
+
+Good examples:
+{"query":"friends eating dinner indoors"}
+{"query":"sunset beach with orange sky"}
+{"query":"person drinking coffee in a cafe"}
+{"query":"dog running on grass"}
+{"query":"planet earth seen from space"}
+
+Bad examples:
+{"query":"find my memory"}
+{"query":"happy feeling"}
+{"query":"something nice"}
 """;
     }
 
@@ -532,29 +584,46 @@ public class ChatServiceImpl implements ChatService {
 
     private String buildReasonSystemPrompt() {
         return """
-너는 사진 검색 챗봇이다.
-사용자 요청과 실제 검색 결과(요약)를 바탕으로,
-왜 이 결과들이 나왔는지 3~6문장으로 친절하게 설명해라.
-불필요한 내용은 줄이고, 사용자가 다음에 무엇을 더 말하면 검색이 더 좋아지는지 마지막 문장에 제안해라.
+너는 사진 검색 결과를 보여준 뒤 사용자를 자연스럽게 도와주는 한국어 챗봇이다.
+
+규칙:
+- 응답은 반드시 자연스러운 한국어로 작성한다.
+- 길이는 2~3문장으로 짧게 작성한다.
+- 먼저 원하는 결과가 나왔는지 가볍게 확인한다.
+- 결과가 더 좋아지도록 사용자가 사진에 보이는 장면을 조금 더 자세히 말해달라고 안내한다.
+- 어려운 말이나 전문 용어는 쓰지 않는다.
+- "자연어", "벡터", "모델", "쿼리", "검색 최적화" 같은 표현은 쓰지 않는다.
+- 예시는 사람이 바로 따라 말할 수 있게 쉬운 표현으로 든다.
+- 검색 결과 자체를 평가하거나 장황하게 분석하지 않는다.
 """;
     }
 
-    private String buildReasonUserPrompt(String userText, String query, List<String> summaries) {
-
-        String block = summaries.isEmpty()
-                ? "(설명 정보 없음)"
-                : String.join("\n- ", summaries);
-
+    private String buildReasonUserPrompt(String userText, String query) {
         return """
 [사용자 요청]
-""" + userText + """
+%s
 
-[생성한 검색 쿼리]
-""" + query + """
+[내부 검색 표현]
+%s
 
-[검색 결과 요약(상위 결과 설명)]
-- """ + block + """
-""";
+사용자에게 짧고 자연스럽게 한 번에 답하라.
+
+규칙:
+- 2~3문장 이하로 작성한다.
+- 말하듯이 자연스럽게 이어서 작성한다.
+- 원하는 결과가 나왔는지 가볍게 묻는다.
+- 부족하다면 사진에 보이는 장면을 조금 더 자세히 말해달라고 안내한다.
+- 사람, 장소, 행동 같은 쉬운 예시를 자연스럽게 포함한다.
+- 단계나 번호를 나누지 않는다.
+
+예시:
+
+예시 1:
+원하는 결과가 나오셨나요? 아직 찾는 사진이 아니라면 사진에 보이는 장면을 조금 더 자세히 말씀해 주세요. 예를 들어 어디에서 찍었는지, 누가 있었는지, 무엇을 하고 있었는지를 함께 말해주시면 더 잘 찾을 수 있어요.
+
+예시 2:
+원하는 사진이 보이시나요? 아니라면 사진 속 상황을 조금 더 구체적으로 말씀해 주세요. 예를 들어 바다에서 노을을 본 장면이나 카페에서 커피를 마시는 모습처럼 표현해주시면 더 정확하게 찾을 수 있어요.
+""".formatted(userText, query);
     }
 
 
@@ -585,19 +654,9 @@ public class ChatServiceImpl implements ChatService {
                 .toList();
     }
 
-    private String buildQueryPlannerUserInput(String currentQuery, String userText) {
-
-        if (currentQuery == null || currentQuery.isBlank()) {
-            return """
-[사용자 요청]
-""" + userText;
-        }
-
+    private String buildQueryPlannerUserInput(String userText) {
         return """
-[이전 검색 상태]
-""" + currentQuery + """
-
-[사용자 추가 요청]
+User request:
 """ + userText;
     }
 
@@ -628,6 +687,22 @@ public class ChatServiceImpl implements ChatService {
         } catch (Exception e) {
             return "{}";
         }
+    }
+
+    private String normalizeSiglipQuery(String query) {
+        if (query == null) return "";
+
+        String q = query.trim();
+
+        q = q.replaceAll("^\"|\"$", "");
+        q = q.replaceAll("\\s+", " ");
+        q = q.replaceAll("[\\.!]+$", "");
+
+        if (q.length() > 120) {
+            q = q.substring(0, 120).trim();
+        }
+
+        return q;
     }
 
 }
