@@ -5,6 +5,7 @@ import barcode.phomate.global.gemini.dto.GeminiGenerateContentRequest;
 import barcode.phomate.global.gemini.dto.GeminiGenerateContentResponse;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.MediaType;
 import org.springframework.stereotype.Component;
@@ -13,6 +14,7 @@ import org.springframework.web.reactive.function.client.WebClient;
 import java.util.Base64;
 import java.util.List;
 
+@Slf4j
 @Component
 @RequiredArgsConstructor
 public class GeminiImageEditClient {
@@ -87,8 +89,13 @@ public class GeminiImageEditClient {
 
         } catch (BadRequestException e) {
             throw e;
+        }
+        catch (org.springframework.web.reactive.function.client.WebClientResponseException e) {
+            log.error("[gemini 에러] status={} body={}", e.getStatusCode(), e.getResponseBodyAsString());
+            throw new BadRequestException("제미나이 에러 났어요: " + e.getStatusCode() + " " + e.getResponseBodyAsString());
         } catch (Exception e) {
-            throw new BadRequestException("Gemini image edit failed: " + e.getMessage());
+            log.error("[gemini 에러] unexpected error", e);
+            throw new BadRequestException("제미나이 에러 났어요2: " + e.getMessage());
         }
     }
 }
