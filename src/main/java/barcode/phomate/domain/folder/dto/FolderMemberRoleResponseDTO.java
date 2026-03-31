@@ -4,6 +4,6 @@ import barcode.phomate.domain.folder.domain.entity.FolderRole;
 
 public record FolderMemberRoleResponseDTO(
         Long memberId,
-        String memberNickname,
+        String memberName,
         FolderRole role
 ) {}
