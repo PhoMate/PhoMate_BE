@@ -215,8 +215,8 @@ public class FolderServiceImpl implements FolderService {
                 folderMember.getId(),
                 folder.getId(),
                 folder.getFolderName(),
-                folder.getOwner().getId(),
-                folderMember.getRole()
+                folderMember.getRole(),
+                folderMember.isAccepted()
         );
     }
 
