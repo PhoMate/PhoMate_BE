@@ -39,3 +39,6 @@ out/
 ## application-local파일 무시
 src/main/resources/application-local.yml
 .env
+
+## Claude Code
+CLAUDE.md
