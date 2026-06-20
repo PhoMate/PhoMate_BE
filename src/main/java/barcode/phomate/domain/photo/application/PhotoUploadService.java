@@ -3,24 +3,19 @@ package barcode.phomate.domain.photo.application;
 import barcode.phomate.domain.member.domain.entity.Member;
 import barcode.phomate.domain.member.domain.repository.MemberRepository;
 import barcode.phomate.domain.photo.domain.entity.Photo;
+import barcode.phomate.domain.photo.domain.entity.PhotoCommitJob;
+import barcode.phomate.domain.photo.domain.repository.PhotoCommitJobRepository;
 import barcode.phomate.domain.photo.domain.repository.PhotoRepository;
 import barcode.phomate.domain.photo.dto.*;
 import barcode.phomate.global.exception.ForbiddenException;
 import barcode.phomate.global.exception.NotFoundException;
-import barcode.phomate.global.fastapi.application.EmbeddingAsyncService;
-import barcode.phomate.global.fastapi.dto.EmbedRequestDTO;
 import barcode.phomate.global.s3.application.S3StorageService;
-import barcode.phomate.global.tx.AfterCommitExecutor;
-import barcode.phomate.global.util.ImageResizeUtil;
 import barcode.phomate.global.util.ImageTypeUtil;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
-import software.amazon.awssdk.services.s3.model.HeadObjectResponse;
 
-import java.io.IOException;
 import java.time.Instant;
 import java.time.LocalDateTime;
 import java.time.ZoneId;
@@ -32,19 +27,13 @@ import java.util.*;
 @Transactional
 public class PhotoUploadService {
 
-    private final PhotoRepository photoRepository;
-    private final MemberRepository memberRepository;
-    private final S3StorageService s3StorageService;
-
-    private final AfterCommitExecutor afterCommitExecutor;
-    private final EmbeddingAsyncService embeddingAsyncService;
-
-    @Value("${app.cdn.base-url}")
-    private String cloudFrontBaseUrl;
+    private final PhotoRepository           photoRepository;
+    private final MemberRepository          memberRepository;
+    private final S3StorageService          s3StorageService;
+    private final PhotoCommitJobRepository  commitJobRepository;
 
     private static final long PRESIGNED_EXPIRE_SEC = 60 * 10; // 10min
-    private static final long MAX_FILE_SIZE_BYTES = 30L * 1024 * 1024; // 30MB
-    private static final String CACHE_CONTROL = "public, max-age=31536000";
+    private static final long MAX_FILE_SIZE_BYTES  = 30L * 1024 * 1024; // 30MB
 
     public PhotoUploadInitResponseDTO init(Long memberId, PhotoUploadInitRequestDTO request) {
         Member member = memberRepository.findById(memberId)
@@ -92,12 +81,25 @@ public class PhotoUploadService {
         return new PhotoUploadInitResponseDTO(results);
     }
 
+    /**
+     * Validates each item, verifies member ownership, creates one
+     * {@link PhotoCommitJob} per photo, and returns immediately.
+     * The actual S3 processing (download → resize → upload → embed)
+     * is handled asynchronously by {@link PhotoCommitJobPoller}.
+     *
+     * @param memberId ID of the authenticated member
+     * @param request  list of photos to commit; ignored when null or empty
+     * @return batch ID and the list of enqueued photo IDs
+     * @throws NotFoundException  if any photoId does not exist
+     * @throws ForbiddenException if any photo does not belong to {@code memberId}
+     */
     public PhotoUploadCommitResponseDTO commit(Long memberId, PhotoUploadCommitRequestDTO request) {
         if (request == null || request.items() == null || request.items().isEmpty()) {
-            return new PhotoUploadCommitResponseDTO(List.of());
+            return new PhotoUploadCommitResponseDTO(UUID.randomUUID().toString(), List.of());
         }
 
-        List<PhotoUploadCommitResultDTO> results = new ArrayList<>(request.items().size());
+        String batchId = UUID.randomUUID().toString();
+        List<Long> photoIds = new ArrayList<>(request.items().size());
 
         for (PhotoUploadCommitItemDTO item : request.items()) {
             validateCommitItem(item);
@@ -109,70 +111,19 @@ public class PhotoUploadService {
                 throw new ForbiddenException("권한이 없습니다.");
             }
 
-            HeadObjectResponse head = s3StorageService.headObject(item.originalKey());
+            commitJobRepository.save(PhotoCommitJob.builder()
+                    .batchId(batchId)
+                    .photoId(photo.getId())
+                    .memberId(memberId)
+                    .originalKey(item.originalKey())
+                    .etag(item.etag())
+                    .build());
 
-            if (item.etag() != null && !item.etag().isBlank()) {
-                String serverEtag = normalizeEtag(head.eTag());
-                String clientEtag = normalizeEtag(item.etag());
-
-                if (serverEtag != null && clientEtag != null && !serverEtag.equals(clientEtag)) {
-                    throw new IllegalStateException("ETag mismatch: 업로드된 파일이 다릅니다.");
-                }
-            }
-
-            byte[] originalBytes = s3StorageService.getObjectBytes(item.originalKey());
-
-            byte[] thumbJpg;
-            byte[] previewJpg;
-            try {
-                thumbJpg = ImageResizeUtil.toJpgResized(originalBytes, 320, 0.82f);
-                previewJpg = ImageResizeUtil.toJpgResized(originalBytes, 1080, 0.85f);
-            } catch (IOException e) {
-                throw new IllegalStateException("Failed to decode/resize image.", e);
-            }
-
-            String prefix = (photo.getImagePrefix() != null && !"TEMP".equals(photo.getImagePrefix()))
-                    ? photo.getImagePrefix()
-                    : "photos/" + photo.getId();
-
-            long v = System.currentTimeMillis();
-            String thumbKey = prefix + "/t_" + v + ".jpg";
-            String previewKey = prefix + "/p_" + v + ".jpg";
-
-            s3StorageService.putBytes(thumbKey, thumbJpg, "image/jpeg", CACHE_CONTROL);
-            s3StorageService.putBytes(previewKey, previewJpg, "image/jpeg", CACHE_CONTROL);
-
-            photo.updateImageKeys(prefix, item.originalKey(), thumbKey, previewKey);
-
-            String previewUrl = cloudFrontBaseUrl + "/" + previewKey;
-
-            Long createdAtMs = photo.getCreatedAt()
-                    .atZone(ZoneId.systemDefault())
-                    .toInstant()
-                    .toEpochMilli();
-
-            String textForEmbedding = (photo.getDescription() == null) ? "" : photo.getDescription().trim();
-
-            EmbedRequestDTO reqDto = new EmbedRequestDTO(
-                    photo.getId(),
-                    memberId,
-                    previewUrl,
-                    textForEmbedding,
-                    createdAtMs
-            );
-
-            afterCommitExecutor.run(() -> {
-                try {
-                    embeddingAsyncService.embedPhoto(reqDto);
-                } catch (Exception e) {
-                    log.error("[EMBED] enqueue failed photoId={} err={}", photo.getId(), e.getMessage(), e);
-                }
-            });
-
-            results.add(new PhotoUploadCommitResultDTO(photo.getId(), previewUrl));
+            photoIds.add(photo.getId());
         }
 
-        return new PhotoUploadCommitResponseDTO(results);
+        log.info("[COMMIT] enqueued batchId={} count={}", batchId, photoIds.size());
+        return new PhotoUploadCommitResponseDTO(batchId, photoIds);
     }
 
     private void validateInitItem(PhotoUploadInitItemDTO item) {
@@ -212,12 +163,4 @@ public class PhotoUploadService {
         return LocalDateTime.now();
     }
 
-    private String normalizeEtag(String etag) {
-        if (etag == null) return null;
-        String t = etag.trim();
-        if (t.startsWith("\"") && t.endsWith("\"") && t.length() >= 2) {
-            t = t.substring(1, t.length() - 1);
-        }
-        return t.isBlank() ? null : t;
-    }
 }
