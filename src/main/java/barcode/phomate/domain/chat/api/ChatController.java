@@ -1,7 +1,9 @@
 package barcode.phomate.domain.chat.api;
 
+import barcode.phomate.domain.chat.application.AgentService;
 import barcode.phomate.domain.chat.application.ChatFolderService;
 import barcode.phomate.domain.chat.application.ChatService;
+import barcode.phomate.domain.chat.dto.AgentRequestDTO;
 import barcode.phomate.domain.chat.dto.ChatFolderConfirmRequestDTO;
 import barcode.phomate.domain.chat.dto.ChatFolderConfirmResponseDTO;
 import barcode.phomate.domain.chat.dto.ChatFolderPreviewRequestDTO;
@@ -31,6 +33,7 @@ public class ChatController {
 
     private final ChatService chatService;
     private final ChatFolderService chatFolderService;
+    private final AgentService agentService;
 
 
     @PostMapping("/sessions/start")
@@ -88,5 +91,16 @@ public class ChatController {
             @RequestBody ChatFolderConfirmRequestDTO request
     ) {
         return ResponseEntity.ok(chatFolderService.confirm(memberId, request));
+    }
+
+    // 편집 / 검색 / 폴더 생성 다 여기로 들어옴
+    @PostMapping(value = "/agent/run", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
+    @Operation(summary = "AI Agent 통합 실행",
+            description = "자연어 1문장으로 편집·검색·폴더 생성을 자동 처리합니다. SSE로 진행 상황 스트리밍.")
+    public Flux<ServerSentEvent<String>> agentRun(
+            @AuthenticationPrincipal Long memberId,
+            @RequestBody AgentRequestDTO request
+    ) {
+        return agentService.run(memberId, request);
     }
 }
