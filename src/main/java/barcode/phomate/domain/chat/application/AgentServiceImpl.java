@@ -60,6 +60,7 @@ public class AgentServiceImpl implements AgentService {
     private final EditService editService;
     private final SearchWorkerClient searchWorkerClient;
     private final WebClient openAiWebClient;
+    private final PendingFolderCache pendingFolderCache;
     private final ObjectMapper mapper = new ObjectMapper();
 
     @Value("${app.openai.model:gpt-4o-mini}")
@@ -93,8 +94,7 @@ public class AgentServiceImpl implements AgentService {
                 .subscribeOn(Schedulers.boundedElastic())
                 .flatMapMany(ctx -> {
 
-                    // GPT한테 의도 파악 시키기
-                    return classifyIntent(request.getUserText())
+                    return classifyIntent(request.getUserText(), pendingFolderCache.get(request.getChatSessionId()) != null)
                             .flatMapMany(intent -> {
                                 log.info("[AGENT] intent={} userText={}", intent, request.getUserText());
 
@@ -102,9 +102,10 @@ public class AgentServiceImpl implements AgentService {
                                     case "edit" -> handleEdit(memberId, request, ctx);
                                     case "search" -> handleSearch(memberId, request, ctx);
                                     case "folder" -> handleFolder(memberId, request, ctx);
-                                    // 검색하고 바로 폴더까지
                                     case "search_and_folder" -> handleSearchAndFolder(memberId, request, ctx);
-                                    default -> handleSearch(memberId, request, ctx); // 애매하면 검색으로
+                                    case "confirm" -> handleConfirm(memberId, request, ctx);
+                                    case "reject" -> handleReject(request, ctx);
+                                    default -> handleSearch(memberId, request, ctx);
                                 };
                             })
                             .onErrorResume(e -> {
@@ -117,9 +118,7 @@ public class AgentServiceImpl implements AgentService {
                 });
     }
 
-    // GPT로 의도 분류
-    // edit / search / folder / search_and_folder
-    private Mono<String> classifyIntent(String userText) {
+    private Mono<String> classifyIntent(String userText, boolean hasPendingFolder) {
         return openAiWebClient.post()
                 .uri("/chat/completions")
                 .contentType(MediaType.APPLICATION_JSON)
@@ -127,7 +126,7 @@ public class AgentServiceImpl implements AgentService {
                         "model", openAiModel,
                         "stream", false,
                         "messages", List.of(
-                                Map.of("role", "system", "content", buildIntentClassifierPrompt()),
+                                Map.of("role", "system", "content", buildIntentClassifierPrompt(hasPendingFolder)),
                                 Map.of("role", "user", "content", userText)
                         )
                 ))
@@ -142,7 +141,7 @@ public class AgentServiceImpl implements AgentService {
                         return "search";
                     }
                 })
-                .onErrorReturn("search"); // GPT 실패해도 검색으로 fallback
+                .onErrorReturn("search");
     }
 
     // 편집 처리 (멀티스텝 + 실패 시 재시도)
@@ -229,7 +228,6 @@ public class AgentServiceImpl implements AgentService {
                 });
     }
 
-    // 폴더 생성 처리 (기존 preview+confirm 통합)
     private Flux<ServerSentEvent<String>> handleFolder(Long memberId, AgentRequestDTO request, SessionCtx ctx) {
 
         return Mono.fromCallable(() -> {
@@ -237,36 +235,75 @@ public class AgentServiceImpl implements AgentService {
                     String keyword = buildFolderKeyword(request.getUserText());
                     log.info("[AGENT FOLDER] keyword={}", keyword);
 
-                    // 벡터 검색
                     TextSearchRequestDTO reqDto = new TextSearchRequestDTO(keyword, SEARCH_TOP_K, memberId, null, null);
                     List<Long> photoIds = searchWorkerClient.searchText(reqDto).hits().stream()
                             .filter(h -> h.score() >= SCORE_THRESHOLD)
                             .map(SearchHitDTO::postId)
                             .toList();
 
-                    // 공유폴더 사진 제외
                     Set<Long> sharedIds = Set.copyOf(photoFolderRepository.findSharedFolderPhotoIdsByMemberId(memberId));
                     List<Long> filtered = photoIds.stream().filter(id -> !sharedIds.contains(id)).toList();
 
-                    // 폴더 생성 + 사진 매핑
+                    List<PhotoSearchItemDTO> items = toPhotoItems(filtered);
+
+                    pendingFolderCache.put(request.getChatSessionId(), keyword, filtered);
+
+                    return new FolderPreviewResult(keyword, items);
+                })
+                .subscribeOn(Schedulers.boundedElastic())
+                .flatMapMany(result -> {
+
+                    String assistantText = String.format(
+                            "'%s' 관련 사진 %d장을 찾았어요. 이 사진들로 폴더를 만들까요?",
+                            result.keyword(), result.items().size()
+                    );
+                    saveAssistantMessage(ctx, assistantText);
+
+                    String payloadJson = toJsonSafely(Map.of("items", result.items()));
+
+                    return Flux.just(
+                            ServerSentEvent.<String>builder().event("results").data(payloadJson).build(),
+                            ServerSentEvent.<String>builder().event("delta").data(assistantText).build(),
+                            ServerSentEvent.<String>builder().event("done").data("ok").build()
+                    );
+                });
+    }
+
+    private Flux<ServerSentEvent<String>> handleConfirm(Long memberId, AgentRequestDTO request, SessionCtx ctx) {
+
+        PendingFolderCache.PendingFolder pending = pendingFolderCache.get(request.getChatSessionId());
+
+        if (pending == null) {
+            String msg = "만들 폴더가 없어요. 먼저 어떤 사진을 모을지 말씀해 주세요!";
+            saveAssistantMessage(ctx, msg);
+            return Flux.just(
+                    ServerSentEvent.<String>builder().event("delta").data(msg).build(),
+                    ServerSentEvent.<String>builder().event("done").data("ok").build()
+            );
+        }
+
+        return Mono.fromCallable(() -> {
+
                     Member member = memberRepository.findById(memberId)
                             .orElseThrow(() -> new NotFoundException("회원을 찾을 수 없습니다."));
 
                     Folder folder = folderRepository.save(Folder.builder()
-                            .folderName(keyword)
+                            .folderName(pending.folderName())
                             .type(FolderType.PERSONAL)
                             .owner(member)
                             .build());
 
-                    List<Photo> photos = photoRepository.findAllById(filtered);
+                    List<Photo> photos = photoRepository.findAllById(pending.photoIds());
                     List<PhotoFolder> mappings = photos.stream()
                             .map(p -> PhotoFolder.builder().folder(folder).photo(p).build())
                             .toList();
                     photoFolderRepository.saveAll(mappings);
 
-                    log.info("[AGENT FOLDER CREATED] folderId={} photoCount={}", folder.getId(), mappings.size());
+                    pendingFolderCache.clear(request.getChatSessionId());
 
-                    return new FolderResult(folder.getId(), keyword, mappings.size());
+                    log.info("[AGENT FOLDER CONFIRMED] folderId={} photoCount={}", folder.getId(), mappings.size());
+
+                    return new FolderResult(folder.getId(), pending.folderName(), mappings.size());
                 })
                 .subscribeOn(Schedulers.boundedElastic())
                 .flatMapMany(result -> {
@@ -287,7 +324,19 @@ public class AgentServiceImpl implements AgentService {
                 });
     }
 
-    // 검색 → 폴더 생성까지 한 번에
+    private Flux<ServerSentEvent<String>> handleReject(AgentRequestDTO request, SessionCtx ctx) {
+
+        pendingFolderCache.clear(request.getChatSessionId());
+
+        String msg = "알겠어요, 폴더를 만들지 않을게요. 다른 사진을 찾아드릴까요?";
+        saveAssistantMessage(ctx, msg);
+
+        return Flux.just(
+                ServerSentEvent.<String>builder().event("delta").data(msg).build(),
+                ServerSentEvent.<String>builder().event("done").data("ok").build()
+        );
+    }
+
     private Flux<ServerSentEvent<String>> handleSearchAndFolder(Long memberId, AgentRequestDTO request, SessionCtx ctx) {
 
         return Mono.fromCallable(() -> {
@@ -304,44 +353,25 @@ public class AgentServiceImpl implements AgentService {
                     Set<Long> sharedIds = Set.copyOf(photoFolderRepository.findSharedFolderPhotoIdsByMemberId(memberId));
                     List<Long> filtered = photoIds.stream().filter(id -> !sharedIds.contains(id)).toList();
 
-                    // 검색 결과 미리보기용
                     List<PhotoSearchItemDTO> items = toPhotoItems(filtered);
 
-                    Member member = memberRepository.findById(memberId)
-                            .orElseThrow(() -> new NotFoundException("회원을 찾을 수 없습니다."));
+                    pendingFolderCache.put(request.getChatSessionId(), keyword, filtered);
 
-                    Folder folder = folderRepository.save(Folder.builder()
-                            .folderName(keyword)
-                            .type(FolderType.PERSONAL)
-                            .owner(member)
-                            .build());
-
-                    List<Photo> photos = photoRepository.findAllById(filtered);
-                    photoFolderRepository.saveAll(
-                            photos.stream()
-                                    .map(p -> PhotoFolder.builder().folder(folder).photo(p).build())
-                                    .toList()
-                    );
-
-                    log.info("[AGENT S&F DONE] folderId={} photoCount={}", folder.getId(), photos.size());
-
-                    return new SearchAndFolderResult(folder.getId(), keyword, photos.size(), items);
+                    return new FolderPreviewResult(keyword, items);
                 })
                 .subscribeOn(Schedulers.boundedElastic())
                 .flatMapMany(result -> {
 
                     String assistantText = String.format(
-                            "'%s' 관련 사진 %d장을 찾아서 폴더로 만들었어요!",
-                            result.folderName(), result.photoCount()
+                            "'%s' 관련 사진 %d장을 찾았어요. 이 사진들로 폴더를 만들까요?",
+                            result.keyword(), result.items().size()
                     );
                     saveAssistantMessage(ctx, assistantText);
 
                     String resultsJson = toJsonSafely(Map.of("items", result.items()));
-                    String folderJson = toJsonSafely(Map.of("folderId", result.folderId()));
 
                     return Flux.just(
                             ServerSentEvent.<String>builder().event("results").data(resultsJson).build(),
-                            ServerSentEvent.<String>builder().event("folder_created").data(folderJson).build(),
                             ServerSentEvent.<String>builder().event("delta").data(assistantText).build(),
                             ServerSentEvent.<String>builder().event("done").data("ok").build()
                     );
@@ -496,8 +526,11 @@ public class AgentServiceImpl implements AgentService {
         });
     }
 
-    // 의도 분류 프롬프트
-    private String buildIntentClassifierPrompt() {
+    private String buildIntentClassifierPrompt(boolean hasPendingFolder) {
+        String pendingNote = hasPendingFolder
+                ? "\nNote: there is a pending folder creation waiting for the user's confirmation. If the user says yes/agree/confirm, classify as \"confirm\". If they say no/cancel/different, classify as \"reject\".\n"
+                : "";
+
         return """
 You are an intent classifier for a photo management app.
 
@@ -506,6 +539,10 @@ Classify the user's request into one of:
 - "search"            : wants to find/look for photos
 - "folder"            : wants to create a folder from photos
 - "search_and_folder" : wants to find photos AND create a folder at once
+- "confirm"           : agrees to a pending folder creation suggestion
+- "reject"            : declines a pending folder creation suggestion
+"""
+                + pendingNote + """
 
 Output format (JSON only):
 {"intent":"..."}
@@ -516,6 +553,9 @@ Examples:
 "바다 사진 찾아줘" -> {"intent":"search"}
 "느좋카페 사진 폴더로 만들어줘" -> {"intent":"folder"}
 "여행 사진 찾아서 폴더 만들어줘" -> {"intent":"search_and_folder"}
+"응 좋아" -> {"intent":"confirm"}
+"네 만들어줘" -> {"intent":"confirm"}
+"아니 됐어" -> {"intent":"reject"}
 """;
     }
 
@@ -592,12 +632,9 @@ Rules:
         }
     }
 
-    // 세션 + user 메시지 묶음
     private record SessionCtx(ChatSession session, ChatMessage userMsg) {}
 
-    // 폴더 생성 결과
     private record FolderResult(Long folderId, String folderName, int photoCount) {}
 
-    // 검색 + 폴더 생성 결과
-    private record SearchAndFolderResult(Long folderId, String folderName, int photoCount, List<PhotoSearchItemDTO> items) {}
+    private record FolderPreviewResult(String keyword, List<PhotoSearchItemDTO> items) {}
 }
