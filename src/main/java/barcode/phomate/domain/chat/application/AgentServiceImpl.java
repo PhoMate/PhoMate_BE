@@ -51,9 +51,7 @@ import java.util.stream.Collectors;
 public class AgentServiceImpl implements AgentService {
 
     private static final int SEARCH_TOP_K = 50;              // 검색(무한스크롤)용 top-K
-    private static final int FOLDER_CANDIDATE_K = 200;       // 폴더용 후보 개수 (적응형 컷이 잘리지 않도록 넉넉히)
-    private static final double FOLDER_CUT_RATIO = 0.75;     // 폴더: 최고 점수의 75% 이상만 담음 (쿼리별 적응형 상대 컷)
-    private static final double FOLDER_MIN_TOP = 0.08;       // 폴더: 최고 점수가 이 미만이면 관련 사진 없음으로 간주
+    private static final int FOLDER_TOP_N = 30;             // 폴더: 검색 상위 N장을 후보로 담음 (사용자가 confirm 때 뺄 수 있음)
     private static final ZoneId SEOUL = ZoneId.of("Asia/Seoul");  // 날짜 계산은 항상 KST 기준
     // Gemini 실패 시 재시도 횟수
     private static final int EDIT_MAX_RETRY = 2;
@@ -409,7 +407,20 @@ clarify는 최후의 수단이다:
                             .owner(member)
                             .build());
 
-                    List<Photo> photos = photoRepository.findAllById(pending.photoIds());
+                    // 사용자가 후보에서 일부를 뺀 경우 selectedPhotoIds만 반영 (pending 후보 내로 제한).
+                    // 값이 없으면 후보 전체를 사용한다.
+                    List<Long> targetIds = pending.photoIds();
+                    if (request.getSelectedPhotoIds() != null && !request.getSelectedPhotoIds().isEmpty()) {
+                        Set<Long> selected = Set.copyOf(request.getSelectedPhotoIds());
+                        List<Long> intersected = pending.photoIds().stream()
+                                .filter(selected::contains)
+                                .toList();
+                        if (!intersected.isEmpty()) {
+                            targetIds = intersected;
+                        }
+                    }
+
+                    List<Photo> photos = photoRepository.findAllById(targetIds);
                     List<PhotoFolder> mappings = photos.stream()
                             .map(p -> PhotoFolder.builder().folder(folder).photo(p).build())
                             .toList();
@@ -493,16 +504,12 @@ clarify는 최후의 수단이다:
                 });
     }
 
-    // 폴더용 적응형 상대 컷: 최고 점수(top) 대비 FOLDER_CUT_RATIO 이상만 남긴다 (쿼리별 자동 적응).
-    // top이 FOLDER_MIN_TOP 미만이면 관련 사진이 없다고 보고 빈 결과를 반환한다.
-    // hits는 점수 내림차순(Qdrant) 이므로 hits.get(0)이 최고 점수.
+    // 폴더 후보: 검색과 동일한 벡터 검색 결과의 상위 FOLDER_TOP_N장을 담는다.
+    // (절대 임계값 컷은 환경별 점수 분포에 취약해 제거. 사용자가 confirm 단계에서 원치 않는 사진을 뺀다.)
+    // hits는 점수 내림차순(Qdrant).
     private List<Long> folderCandidateIds(List<SearchHitDTO> hits) {
-        if (hits.isEmpty()) return List.of();
-        double top = hits.get(0).score();
-        if (top < FOLDER_MIN_TOP) return List.of();
-        double cut = FOLDER_CUT_RATIO * top;
         return hits.stream()
-                .filter(h -> h.score() >= cut)
+                .limit(FOLDER_TOP_N)
                 .map(SearchHitDTO::postId)
                 .toList();
     }
@@ -513,8 +520,18 @@ clarify는 최후의 수단이다:
         boolean hasSemantic() { return text != null && !text.isBlank(); }
     }
 
+    // 날짜/기간 표현 감지 (이게 있을 때만 날짜 분해 LLM을 태운다)
+    private static final java.util.regex.Pattern DATE_REF = java.util.regex.Pattern.compile(
+            "어제|오늘|그제|그저께|엊그제|이번\\s*주|지난\\s*주|저번\\s*주|이번\\s*달|지난\\s*달|저번\\s*달|"
+            + "작년|재작년|올해|최근|[0-9]{1,2}\\s*월|[0-9]{4}\\s*년|[0-9]{1,2}\\s*일|[0-9]+\\s*일\\s*전|[0-9]+\\s*주\\s*전|[0-9]+\\s*개?월\\s*전");
+
     // 요청에서 날짜 조건(어제/지난주 등)과 나머지 대상 텍스트를 분리한다. (오늘=KST 기준)
+    // 날짜 표현이 없으면 LLM을 태우지 않고 원문을 그대로 대상으로 둔다 (검색어 오염 방지).
     private DateDecomp decompose(SessionCtx ctx) {
+        String text = ctx.resolvedText();
+        if (text == null || !DATE_REF.matcher(text).find()) {
+            return new DateDecomp(null, null, text);
+        }
         try {
             String response = openAiWebClient.post()
                     .uri("/chat/completions")
@@ -554,13 +571,15 @@ clarify는 최후의 수단이다:
             return photoRepository.findByMemberAndShotAtBetween(memberId, from, to)
                     .stream().map(Photo::getId).toList();
         }
-        String q = buildSearchQuery(d.hasSemantic() ? d.text() : rawResolvedText);
+        // 날짜가 있을 때만 decompose가 분리한 대상(text)을 사용하고,
+        // 날짜가 없으면 원문을 그대로 검색어 생성에 넘긴다 (decompose의 불필요한 변형 방지).
+        String q = buildSearchQuery(d.hasDate() && d.hasSemantic() ? d.text() : rawResolvedText);
         Long fromMs = null, toMs = null;
         if (d.hasDate()) {
             fromMs = d.from().atStartOfDay(SEOUL).toInstant().toEpochMilli();
             toMs = d.to().plusDays(1).atStartOfDay(SEOUL).toInstant().toEpochMilli();
         }
-        int k = forFolder ? FOLDER_CANDIDATE_K : SEARCH_TOP_K;
+        int k = forFolder ? FOLDER_TOP_N : SEARCH_TOP_K;
         List<SearchHitDTO> hits = searchWorkerClient.searchText(
                 new TextSearchRequestDTO(q, k, memberId, fromMs, toMs)).hits();
         return forFolder ? folderCandidateIds(hits) : hits.stream().map(SearchHitDTO::postId).toList();
