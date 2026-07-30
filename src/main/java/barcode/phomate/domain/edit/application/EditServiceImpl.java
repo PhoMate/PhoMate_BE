@@ -56,6 +56,8 @@ public class EditServiceImpl implements EditService{
             .build();
 
     // 1. 편집 세션 시작
+    // 매 호출마다 새 편집 세션을 생성한다. 대화 중 편집 연속성은 에이전트의
+    // ActiveEditSessionCache 바인딩이 담당하며, 다른 동작 후 다시 편집하면 새로 시작한다.
     @Override
     public EditSession start(Long memberId, Long photoId) {
 
@@ -65,6 +67,11 @@ public class EditServiceImpl implements EditService{
         Photo photo = photoRepository.findById(photoId)
                 .orElseThrow(()-> new NotFoundException("사진을 찾을 수 없습니다."));
 
+        return createNewSession(member, photo);
+    }
+
+    // 새 편집 세션 생성 + 편집 전용 복사본(버전 0) 준비
+    private EditSession createNewSession(Member member, Photo photo) {
         EditSession session = editSessionRepository.save(EditSession.builder()
                 .member(member)
                 .photo(photo)
@@ -85,7 +92,7 @@ public class EditServiceImpl implements EditService{
                 .prompt("편집 복사본")
                 .build());
 
-        // 기본 currentIndes는 0
+        // 기본 currentIndex는 0
         return session;
     }
 
