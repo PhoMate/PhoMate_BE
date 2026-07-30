@@ -45,4 +45,19 @@ public interface PhotoRepository extends JpaRepository<Photo, Long> {
             Pageable pageable
     );
     List<Photo> findByIdIn(List<Long> photoIds);
+
+    // 날짜 범위(shotAt, KST 벽시계 기준) 조회 — "어제/지난주 사진" 같은 날짜만 검색·폴더용
+    @Query("""
+        select p
+        from Photo p
+        where p.member.id = :memberId
+          and p.deletedAt is null
+          and p.shotAt >= :from and p.shotAt < :to
+        order by p.shotAt desc, p.id desc
+    """)
+    List<Photo> findByMemberAndShotAtBetween(
+            @Param("memberId") Long memberId,
+            @Param("from") LocalDateTime from,
+            @Param("to") LocalDateTime to
+    );
 }
