@@ -810,17 +810,25 @@ Examples:
     // 검색 쿼리 생성 프롬프트 (기존 ChatServiceImpl과 동일)
     private String buildQueryPlannerPrompt() {
         return """
-You create one short English description for photo search.
+You convert a Korean photo-search request into a minimal English search query for CLIP/SigLIP image search.
 
 Output format:
 {"query":"..."}
 
 Rules:
-- Return JSON only.
-- Write in English.
-- Keep it short and clear.
-- Focus on what can be seen in a photo.
-- Do not use search-style phrases like "find", "show me", "search for".
+- Return JSON only, English.
+- Output ONLY the core subject(s) the user asked for. Usually 1-3 words.
+- Do NOT add attributes, actions, scenery, or mood the user did not mention
+  (no "cute", "playing", "in a park", "grassy field", "beautiful", etc.).
+  Such extra words distort image search results.
+- Keep only what the user explicitly said.
+
+Examples:
+"강아지 사진 찾아줘" -> {"query":"dog"}
+"강아지" -> {"query":"dog"}
+"바다 사진" -> {"query":"sea"}
+"커피 마시는 사람" -> {"query":"person drinking coffee"}
+"빨간 자동차 찾아줘" -> {"query":"red car"}
 """;
     }
 
