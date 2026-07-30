@@ -9,6 +9,7 @@ import barcode.phomate.global.fastapi.application.EmbeddingAsyncService;
 import barcode.phomate.global.fastapi.dto.EmbedRequestDTO;
 import barcode.phomate.global.s3.application.S3StorageService;
 import barcode.phomate.global.tx.AfterCommitExecutor;
+import barcode.phomate.global.util.ExifUtil;
 import barcode.phomate.global.util.ImageResizeUtil;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -19,6 +20,7 @@ import org.springframework.transaction.annotation.Transactional;
 import software.amazon.awssdk.services.s3.model.HeadObjectResponse;
 
 import java.io.IOException;
+import java.time.LocalDateTime;
 import java.time.ZoneId;
 
 /**
@@ -86,6 +88,9 @@ public class PhotoCommitJobProcessor {
 
         byte[] originalBytes = s3StorageService.getObjectBytes(job.getOriginalKey());
 
+        // EXIF 촬영일이 있으면 shotAt을 실제 촬영 시각으로 갱신 (없으면 업로드 시 값 유지)
+        ExifUtil.extractShotAt(originalBytes).ifPresent(photo::updateShotAt);
+
         byte[] thumbJpg;
         byte[] previewJpg;
         try {
@@ -106,15 +111,16 @@ public class PhotoCommitJobProcessor {
         photo.updateImageKeys(prefix, job.getOriginalKey(), thumbKey, previewKey);
 
         String previewUrl  = cloudFrontBaseUrl + "/" + previewKey;
-        long   createdAtMs = photo.getCreatedAt()
-                .atZone(ZoneId.systemDefault())
-                .toInstant()
-                .toEpochMilli();
+
+        // Qdrant 날짜 필터용: 촬영 시각(shotAt, KST 벽시계)을 KST 기준 epoch ms로 변환해 보낸다.
+        // (EmbedRequestDTO의 필드명은 createdAtMs지만 실제로는 shotAt을 담는다 → 워커 무수정)
+        LocalDateTime shotAt = (photo.getShotAt() != null) ? photo.getShotAt() : photo.getCreatedAt();
+        long shotAtMs = shotAt.atZone(ZoneId.of("Asia/Seoul")).toInstant().toEpochMilli();
 
         String text = (photo.getDescription() == null) ? "" : photo.getDescription().trim();
 
         EmbedRequestDTO embedReq = new EmbedRequestDTO(
-                photo.getId(), job.getMemberId(), previewUrl, text, createdAtMs);
+                photo.getId(), job.getMemberId(), previewUrl, text, shotAtMs);
 
         // Trigger embedding only after this REQUIRES_NEW transaction commits
         afterCommitExecutor.run(() -> {

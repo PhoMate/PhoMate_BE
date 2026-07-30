@@ -35,6 +35,10 @@ import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 import reactor.core.scheduler.Schedulers;
 
+import java.time.LocalDate;
+import java.time.LocalDateTime;
+import java.time.ZoneId;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -46,8 +50,11 @@ import java.util.stream.Collectors;
 @Slf4j
 public class AgentServiceImpl implements AgentService {
 
-    private static final int SEARCH_TOP_K = 50;
-    private static final double SCORE_THRESHOLD = 0.02;
+    private static final int SEARCH_TOP_K = 50;              // 검색(무한스크롤)용 top-K
+    private static final int FOLDER_CANDIDATE_K = 200;       // 폴더용 후보 개수 (적응형 컷이 잘리지 않도록 넉넉히)
+    private static final double FOLDER_CUT_RATIO = 0.75;     // 폴더: 최고 점수의 75% 이상만 담음 (쿼리별 적응형 상대 컷)
+    private static final double FOLDER_MIN_TOP = 0.08;       // 폴더: 최고 점수가 이 미만이면 관련 사진 없음으로 간주
+    private static final ZoneId SEOUL = ZoneId.of("Asia/Seoul");  // 날짜 계산은 항상 KST 기준
     // Gemini 실패 시 재시도 횟수
     private static final int EDIT_MAX_RETRY = 2;
 
@@ -61,6 +68,7 @@ public class AgentServiceImpl implements AgentService {
     private final SearchWorkerClient searchWorkerClient;
     private final WebClient openAiWebClient;
     private final PendingFolderCache pendingFolderCache;
+    private final ActiveEditSessionCache activeEditSessionCache;
     private final ObjectMapper mapper = new ObjectMapper();
 
     @Value("${app.openai.model:gpt-4o-mini}")
@@ -82,21 +90,39 @@ public class AgentServiceImpl implements AgentService {
                         throw new ForbiddenException("권한이 없습니다.");
                     }
 
-                    // user 메시지 저장
+                    // user 메시지 저장 (원문 그대로 — 히스토리 표시용)
                     ChatMessage userMsg = chatMessageRepository.save(ChatMessage.builder()
                             .chatSession(session)
                             .parent(null)
                             .content(request.getUserText())
                             .build());
 
-                    return new SessionCtx(session, userMsg);
+                    // 문맥 해소: 지시어 치환 or 되물음 결정
+                    ContextOutcome outcome = contextualize(session, userMsg.getId(), request.getUserText());
+
+                    return new SessionCtx(session, userMsg, outcome.resolved(), outcome.clarify());
                 })
                 .subscribeOn(Schedulers.boundedElastic())
                 .flatMapMany(ctx -> {
 
-                    return classifyIntent(request.getUserText(), pendingFolderCache.get(request.getChatSessionId()) != null)
+                    // 문맥에서 대상을 특정하지 못하면 실행하지 않고 사용자에게 되물음
+                    if (ctx.clarifyQuestion() != null) {
+                        saveAssistantMessage(ctx, ctx.clarifyQuestion());
+                        return Flux.just(
+                                ServerSentEvent.<String>builder().event("delta").data(ctx.clarifyQuestion()).build(),
+                                ServerSentEvent.<String>builder().event("done").data("ok").build()
+                        );
+                    }
+
+                    return classifyIntent(ctx, pendingFolderCache.get(request.getChatSessionId()) != null)
                             .flatMapMany(intent -> {
-                                log.info("[AGENT] intent={} userText={}", intent, request.getUserText());
+                                log.info("[AGENT] intent={} resolved={}", intent, ctx.resolvedText());
+
+                                // 편집이 아닌 동작으로 넘어가면 활성 편집 세션 바인딩 해제
+                                // (이후 같은 사진을 다시 편집하면 예전 세션을 재개하지 않고 새로 시작)
+                                if (!"edit".equals(intent)) {
+                                    activeEditSessionCache.clear(request.getChatSessionId());
+                                }
 
                                 return switch (intent) {
                                     case "edit" -> handleEdit(memberId, request, ctx);
@@ -118,17 +144,95 @@ public class AgentServiceImpl implements AgentService {
                 });
     }
 
-    private Mono<String> classifyIntent(String userText, boolean hasPendingFolder) {
+    // 최근 대화 N턴을 LLM messages 형식으로 구성 (system → 이전 대화 → 현재 메시지)
+    // ChatMessage에는 role 필드가 없어 parent==null이면 user, 아니면 assistant로 판별한다.
+    private List<Map<String, String>> withRecentHistory(String systemPrompt, ChatSession session,
+                                                        Long excludeMsgId, String currentUserContent) {
+        List<Map<String, String>> messages = new ArrayList<>();
+        messages.add(Map.of("role", "system", "content", systemPrompt));
+
+        List<ChatMessage> recent = chatMessageRepository.findTop10ByChatSessionOrderByCreatedAtDesc(session);
+        // 최신순 → 오래된순으로 뒤집고, 방금 저장한 현재 메시지는 제외
+        for (int i = recent.size() - 1; i >= 0; i--) {
+            ChatMessage m = recent.get(i);
+            if (excludeMsgId != null && m.getId().equals(excludeMsgId)) continue;
+            String role = (m.getParent() == null) ? "user" : "assistant";
+            messages.add(Map.of("role", role, "content", m.getContent()));
+        }
+
+        messages.add(Map.of("role", "user", "content", currentUserContent));
+        return messages;
+    }
+
+    private record ContextOutcome(String resolved, String clarify) {}
+
+    // 문맥 해소 단계: 직전 대화로 지시어("이거/그거")를 실제 대상으로 치환해 자기완결 요청으로 재작성한다.
+    // 문맥에서 대상을 특정할 수 없으면 사용자에게 되물을 질문(clarify)을 반환한다.
+    private ContextOutcome contextualize(ChatSession session, Long currentMsgId, String userText) {
+        try {
+            String response = openAiWebClient.post()
+                    .uri("/chat/completions")
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .bodyValue(Map.of(
+                            "model", openAiModel,
+                            "stream", false,
+                            "messages", withRecentHistory(buildContextResolverPrompt(), session, currentMsgId, userText)
+                    ))
+                    .retrieve()
+                    .bodyToMono(String.class)
+                    .block();
+
+            String content = extractAssistantContent(response);
+            JsonNode node = mapper.readTree(content);
+            String clarify = node.path("clarify").asText("").trim();
+            if (!clarify.isBlank()) {
+                return new ContextOutcome(null, clarify);
+            }
+            String resolved = node.path("resolved").asText("").trim();
+            return new ContextOutcome(resolved.isBlank() ? userText : resolved, null);
+        } catch (Exception e) {
+            // 실패 시 원문 그대로 진행 (안전 폴백)
+            log.warn("[AGENT CONTEXTUALIZE FAIL] fallback to original text", e);
+            return new ContextOutcome(userText, null);
+        }
+    }
+
+    private String buildContextResolverPrompt() {
+        return """
+너는 사진 관리 챗봇의 대화 문맥 해소기다.
+직전 대화를 참고해, 사용자의 마지막 메시지를 그 자체로 의미가 통하는 완결된 한국어 요청으로 다시 써라.
+
+핵심 원칙:
+- 마지막 메시지가 앞선 대화에 기대어야만 이해되는 부분이 있으면, 그 부분을 대화에서 가리키는 실제 대상·의미로 채워 넣어라.
+  형태는 무엇이든 상관없다 — 지시어(이거/그거/저거), 생략된 목적어, 이어지는 요청, "아까/방금/위에/N번째" 같은 참조,
+  짧은 후속 발화 등 대화 맥락에 의존하는 표현 전반을 대상으로 한다.
+- 사용자가 실제로 의도한 것만 복원하고, 새로운 의도·조건·정보를 임의로 추가하지 마라.
+- 이미 그 자체로 완결된 메시지면 거의 그대로 다시 써라.
+- 앞선 대화에서 대상을 특정할 수 없거나 요청이 여러 갈래로 해석돼 모호하면, 넘겨짚지 말고 되물을 짧은 질문을 만들어라.
+
+출력은 반드시 JSON 하나만:
+- 해소 가능: {"resolved":"<완결된 요청>"}
+- 되물어야 함: {"clarify":"<사용자에게 물을 질문>"}
+
+아래 예시는 형태의 일부일 뿐이며, 위 원칙을 우선한다.
+(직전) user: 강아지 사진 보여줘 / assistant: 강아지 사진 5장이에요
+현재: "이거 폴더로 만들어줘"    -> {"resolved":"강아지 사진으로 폴더 만들어줘"}
+현재: "고양이는?"             -> {"resolved":"고양이 사진 찾아줘"}
+현재: "두 번째 거 더 밝게"      -> {"resolved":"방금 보여준 강아지 사진 중 두 번째 사진을 더 밝게 편집해줘"}
+현재(문맥 없음): "이거 찾아줘"   -> {"clarify":"어떤 사진을 찾아드릴까요?"}
+""";
+    }
+
+    private Mono<String> classifyIntent(SessionCtx ctx, boolean hasPendingFolder) {
         return openAiWebClient.post()
                 .uri("/chat/completions")
                 .contentType(MediaType.APPLICATION_JSON)
                 .bodyValue(Map.of(
                         "model", openAiModel,
                         "stream", false,
-                        "messages", List.of(
-                                Map.of("role", "system", "content", buildIntentClassifierPrompt(hasPendingFolder)),
-                                Map.of("role", "user", "content", userText)
-                        )
+                        "messages", withRecentHistory(
+                                buildIntentClassifierPrompt(hasPendingFolder),
+                                ctx.session(), ctx.userMsg().getId(), ctx.resolvedText())
                 ))
                 .retrieve()
                 .bodyToMono(String.class)
@@ -147,23 +251,32 @@ public class AgentServiceImpl implements AgentService {
     // 편집 처리 (멀티스텝 + 실패 시 재시도)
     private Flux<ServerSentEvent<String>> handleEdit(Long memberId, AgentRequestDTO request, SessionCtx ctx) {
 
-        if (request.getEditSessionId() == null) {
+        // 편집 대상: 드래그로 넘어온 editSessionId 우선, 없으면 대화에 바인딩된 활성 편집 세션 사용
+        Long resolvedEditSessionId = request.getEditSessionId() != null
+                ? request.getEditSessionId()
+                : activeEditSessionCache.get(request.getChatSessionId());
+
+        if (resolvedEditSessionId == null) {
             return Flux.just(
                     ServerSentEvent.<String>builder().event("delta").data("편집할 사진을 먼저 선택해 주세요!").build(),
                     ServerSentEvent.<String>builder().event("done").data("ok").build()
             );
         }
 
+        // 대화 단위로 활성 편집 세션 바인딩 → 이후 드래그 없이도 편집을 이어갈 수 있음
+        activeEditSessionCache.put(request.getChatSessionId(), resolvedEditSessionId);
+        final Long editSessionId = resolvedEditSessionId;
+
         return Mono.fromCallable(() -> {
                     // 멀티스텝 편집: GPT로 편집 단계 쪼개기
-                    List<String> steps = splitEditSteps(request.getUserText());
+                    List<String> steps = splitEditSteps(ctx.resolvedText());
                     log.info("[AGENT EDIT] steps={}", steps);
 
                     StringBuilder resultUrl = new StringBuilder();
 
                     for (String step : steps) {
                         // 단계별 편집 + 실패 시 재시도
-                        EditVersion version = editWithRetry(memberId, request.getEditSessionId(), step);
+                        EditVersion version = editWithRetry(memberId, editSessionId, step);
                         resultUrl = new StringBuilder(cloudFrontBaseUrl + "/" + version.getS3Key());
                         log.info("[AGENT EDIT STEP] step={} versionIndex={}", step, version.getVersionIndex());
                     }
@@ -198,26 +311,18 @@ public class AgentServiceImpl implements AgentService {
 
         return Mono.fromCallable(() -> {
 
-                    String query = buildSearchQuery(request.getUserText());
-                    log.info("[AGENT SEARCH] query={}", query);
-
-                    // 세션에 검색 쿼리 저장 (검색→폴더 이어질 때 사용)
-                    ctx.session().updateSearchQuery(query);
-                    chatSessionRepository.save(ctx.session());
-
-                    TextSearchRequestDTO reqDto = new TextSearchRequestDTO(query, SEARCH_TOP_K, memberId, null, null);
-                    List<Long> photoIds = searchWorkerClient.searchText(reqDto).hits().stream()
-                            .filter(h -> h.score() >= SCORE_THRESHOLD)
-                            .map(SearchHitDTO::postId)
-                            .toList();
-
+                    DateDecomp decomp = decompose(ctx);
+                    log.info("[AGENT SEARCH] date={}~{} text={}", decomp.from(), decomp.to(), decomp.text());
+                    List<Long> photoIds = resolveCandidateIds(memberId, decomp, ctx.resolvedText(), false);
                     return toPhotoItems(photoIds);
                 })
                 .subscribeOn(Schedulers.boundedElastic())
                 .flatMapMany(items -> {
 
                     String payloadJson = toJsonSafely(Map.of("items", items));
-                    String assistantText = "원하는 사진이 보이시나요? 사진 속 상황을 조금 더 구체적으로 말씀해 주시면 더 잘 찾을 수 있어요.";
+                    String assistantText = items.isEmpty()
+                            ? "조건에 맞는 사진을 찾지 못했어요. 조금 더 구체적으로 말씀해 주시겠어요?"
+                            : "요청하신 것과 비슷한 순으로 사진을 가져왔어요. 원하는 게 아니면 조금 더 자세히 말씀해 주세요.";
                     saveAssistantMessage(ctx, assistantText);
 
                     return Flux.just(
@@ -232,31 +337,30 @@ public class AgentServiceImpl implements AgentService {
 
         return Mono.fromCallable(() -> {
 
-                    String keyword = buildFolderKeyword(request.getUserText());
+                    String keyword = buildFolderKeyword(ctx.resolvedText());
                     log.info("[AGENT FOLDER] keyword={}", keyword);
 
-                    TextSearchRequestDTO reqDto = new TextSearchRequestDTO(keyword, SEARCH_TOP_K, memberId, null, null);
-                    List<Long> photoIds = searchWorkerClient.searchText(reqDto).hits().stream()
-                            .filter(h -> h.score() >= SCORE_THRESHOLD)
-                            .map(SearchHitDTO::postId)
-                            .toList();
+                    DateDecomp decomp = decompose(ctx);
+                    List<Long> photoIds = resolveCandidateIds(memberId, decomp, ctx.resolvedText(), true);
 
                     Set<Long> sharedIds = Set.copyOf(photoFolderRepository.findSharedFolderPhotoIdsByMemberId(memberId));
                     List<Long> filtered = photoIds.stream().filter(id -> !sharedIds.contains(id)).toList();
 
                     List<PhotoSearchItemDTO> items = toPhotoItems(filtered);
 
-                    pendingFolderCache.put(request.getChatSessionId(), keyword, filtered);
+                    if (!filtered.isEmpty()) {
+                        pendingFolderCache.put(request.getChatSessionId(), keyword, filtered);
+                    }
 
                     return new FolderPreviewResult(keyword, items);
                 })
                 .subscribeOn(Schedulers.boundedElastic())
                 .flatMapMany(result -> {
 
-                    String assistantText = String.format(
-                            "'%s' 관련 사진 %d장을 찾았어요. 이 사진들로 폴더를 만들까요?",
-                            result.keyword(), result.items().size()
-                    );
+                    String assistantText = result.items().isEmpty()
+                            ? String.format("'%s' 관련된 사진을 찾지 못했어요. 조금 더 구체적으로 말씀해 주시겠어요?", result.keyword())
+                            : String.format("'%s' 관련 사진 %d장을 찾았어요. 이 사진들로 폴더를 만들까요?",
+                                    result.keyword(), result.items().size());
                     saveAssistantMessage(ctx, assistantText);
 
                     String payloadJson = toJsonSafely(Map.of("items", result.items()));
@@ -341,31 +445,30 @@ public class AgentServiceImpl implements AgentService {
 
         return Mono.fromCallable(() -> {
 
-                    String keyword = buildFolderKeyword(request.getUserText());
+                    String keyword = buildFolderKeyword(ctx.resolvedText());
                     log.info("[AGENT SEARCH_AND_FOLDER] keyword={}", keyword);
 
-                    TextSearchRequestDTO reqDto = new TextSearchRequestDTO(keyword, SEARCH_TOP_K, memberId, null, null);
-                    List<Long> photoIds = searchWorkerClient.searchText(reqDto).hits().stream()
-                            .filter(h -> h.score() >= SCORE_THRESHOLD)
-                            .map(SearchHitDTO::postId)
-                            .toList();
+                    DateDecomp decomp = decompose(ctx);
+                    List<Long> photoIds = resolveCandidateIds(memberId, decomp, ctx.resolvedText(), true);
 
                     Set<Long> sharedIds = Set.copyOf(photoFolderRepository.findSharedFolderPhotoIdsByMemberId(memberId));
                     List<Long> filtered = photoIds.stream().filter(id -> !sharedIds.contains(id)).toList();
 
                     List<PhotoSearchItemDTO> items = toPhotoItems(filtered);
 
-                    pendingFolderCache.put(request.getChatSessionId(), keyword, filtered);
+                    if (!filtered.isEmpty()) {
+                        pendingFolderCache.put(request.getChatSessionId(), keyword, filtered);
+                    }
 
                     return new FolderPreviewResult(keyword, items);
                 })
                 .subscribeOn(Schedulers.boundedElastic())
                 .flatMapMany(result -> {
 
-                    String assistantText = String.format(
-                            "'%s' 관련 사진 %d장을 찾았어요. 이 사진들로 폴더를 만들까요?",
-                            result.keyword(), result.items().size()
-                    );
+                    String assistantText = result.items().isEmpty()
+                            ? String.format("'%s' 관련된 사진을 찾지 못했어요. 조금 더 구체적으로 말씀해 주시겠어요?", result.keyword())
+                            : String.format("'%s' 관련 사진 %d장을 찾았어요. 이 사진들로 폴더를 만들까요?",
+                                    result.keyword(), result.items().size());
                     saveAssistantMessage(ctx, assistantText);
 
                     String resultsJson = toJsonSafely(Map.of("items", result.items()));
@@ -376,6 +479,100 @@ public class AgentServiceImpl implements AgentService {
                             ServerSentEvent.<String>builder().event("done").data("ok").build()
                     );
                 });
+    }
+
+    // 폴더용 적응형 상대 컷: 최고 점수(top) 대비 FOLDER_CUT_RATIO 이상만 남긴다 (쿼리별 자동 적응).
+    // top이 FOLDER_MIN_TOP 미만이면 관련 사진이 없다고 보고 빈 결과를 반환한다.
+    // hits는 점수 내림차순(Qdrant) 이므로 hits.get(0)이 최고 점수.
+    private List<Long> folderCandidateIds(List<SearchHitDTO> hits) {
+        if (hits.isEmpty()) return List.of();
+        double top = hits.get(0).score();
+        if (top < FOLDER_MIN_TOP) return List.of();
+        double cut = FOLDER_CUT_RATIO * top;
+        return hits.stream()
+                .filter(h -> h.score() >= cut)
+                .map(SearchHitDTO::postId)
+                .toList();
+    }
+
+    // ── 날짜 + 대상 분해 / 라우팅 ────────────────────────────
+    private record DateDecomp(LocalDate from, LocalDate to, String text) {
+        boolean hasDate() { return from != null && to != null; }
+        boolean hasSemantic() { return text != null && !text.isBlank(); }
+    }
+
+    // 요청에서 날짜 조건(어제/지난주 등)과 나머지 대상 텍스트를 분리한다. (오늘=KST 기준)
+    private DateDecomp decompose(SessionCtx ctx) {
+        try {
+            String response = openAiWebClient.post()
+                    .uri("/chat/completions")
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .bodyValue(Map.of(
+                            "model", openAiModel,
+                            "stream", false,
+                            "messages", List.of(
+                                    Map.of("role", "system", "content", buildDateDecompPrompt(LocalDate.now(SEOUL).toString())),
+                                    Map.of("role", "user", "content", ctx.resolvedText())
+                            )
+                    ))
+                    .retrieve()
+                    .bodyToMono(String.class)
+                    .block();
+            JsonNode node = mapper.readTree(extractAssistantContent(response));
+            LocalDate from = parseDateOrNull(node.path("dateFrom").asText(""));
+            LocalDate to = parseDateOrNull(node.path("dateTo").asText(""));
+            return new DateDecomp(from, to, node.path("text").asText("").trim());
+        } catch (Exception e) {
+            log.warn("[AGENT DECOMPOSE FAIL] fallback: 날짜 없음", e);
+            return new DateDecomp(null, null, ctx.resolvedText());
+        }
+    }
+
+    private LocalDate parseDateOrNull(String s) {
+        if (s == null || s.isBlank() || "null".equalsIgnoreCase(s.trim())) return null;
+        try { return LocalDate.parse(s.trim()); } catch (Exception e) { return null; }
+    }
+
+    // 검색/폴더 공통: 분해 결과로 후보 photoId 목록을 만든다.
+    // 날짜만 → MySQL shotAt 범위(전수). 그 외 → 벡터검색(+날짜필터), forFolder면 적응형 컷.
+    private List<Long> resolveCandidateIds(Long memberId, DateDecomp d, String rawResolvedText, boolean forFolder) {
+        if (d.hasDate() && !d.hasSemantic()) {
+            LocalDateTime from = d.from().atStartOfDay();
+            LocalDateTime to = d.to().plusDays(1).atStartOfDay();
+            return photoRepository.findByMemberAndShotAtBetween(memberId, from, to)
+                    .stream().map(Photo::getId).toList();
+        }
+        String q = buildSearchQuery(d.hasSemantic() ? d.text() : rawResolvedText);
+        Long fromMs = null, toMs = null;
+        if (d.hasDate()) {
+            fromMs = d.from().atStartOfDay(SEOUL).toInstant().toEpochMilli();
+            toMs = d.to().plusDays(1).atStartOfDay(SEOUL).toInstant().toEpochMilli();
+        }
+        int k = forFolder ? FOLDER_CANDIDATE_K : SEARCH_TOP_K;
+        List<SearchHitDTO> hits = searchWorkerClient.searchText(
+                new TextSearchRequestDTO(q, k, memberId, fromMs, toMs)).hits();
+        return forFolder ? folderCandidateIds(hits) : hits.stream().map(SearchHitDTO::postId).toList();
+    }
+
+    private String buildDateDecompPrompt(String todayKst) {
+        return """
+너는 사진 검색 요청에서 날짜 조건과 나머지 요청을 분리하는 파서다.
+오늘 날짜(KST)는 %s 이다.
+
+규칙:
+- 날짜/기간 표현(어제, 오늘, 지난주, 지난달, N월, YYYY-MM-DD 등)이 있으면 오늘 기준으로 dateFrom/dateTo(YYYY-MM-DD, 포함 범위)를 계산한다.
+- 날짜 표현을 뺀 "찾으려는 대상"을 text에 담는다. 대상이 따로 없으면 text는 "".
+- 날짜 표현이 없으면 dateFrom/dateTo는 null.
+
+출력은 반드시 JSON 하나만:
+{"dateFrom": "YYYY-MM-DD 또는 null", "dateTo": "YYYY-MM-DD 또는 null", "text": "나머지 요청"}
+
+예)
+"어제 찍은 강아지 사진 찾아줘" -> {"dateFrom":"2026-07-29","dateTo":"2026-07-29","text":"강아지 사진 찾아줘"}
+"어제 사진 찾아줘"            -> {"dateFrom":"2026-07-29","dateTo":"2026-07-29","text":""}
+"지난주 사진 폴더 만들어줘"     -> {"dateFrom":"2026-07-20","dateTo":"2026-07-26","text":""}
+"강아지 사진 찾아줘"          -> {"dateFrom":null,"dateTo":null,"text":"강아지 사진 찾아줘"}
+""".formatted(todayKst);
     }
 
     // 편집 실패 시 최대 EDIT_MAX_RETRY번 재시도
@@ -632,7 +829,8 @@ Rules:
         }
     }
 
-    private record SessionCtx(ChatSession session, ChatMessage userMsg) {}
+    // resolvedText: 문맥 해소된 실제 실행용 요청 / clarifyQuestion: 되물어야 하면 그 질문(아니면 null)
+    private record SessionCtx(ChatSession session, ChatMessage userMsg, String resolvedText, String clarifyQuestion) {}
 
     private record FolderResult(Long folderId, String folderName, int photoCount) {}
 

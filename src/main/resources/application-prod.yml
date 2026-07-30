@@ -69,5 +69,5 @@ google:
 
 jwt:
   secret: ${JWT_SECRET}
-  access-token-exp-min: 60
+  access-token-exp-min: 720
   refresh-token-exp-day: 14

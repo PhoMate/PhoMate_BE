@@ -367,9 +367,10 @@ public class PhotoService {
 
 
     private LocalDateTime resolveShotAt(Long clientLastModifiedMs) {
+        // shotAt은 KST 벽시계 기준으로 저장한다 (서버 기본 TZ가 UTC일 수 있으므로 명시)
         if (clientLastModifiedMs != null && clientLastModifiedMs > 0) {
-            return LocalDateTime.ofInstant(Instant.ofEpochMilli(clientLastModifiedMs), ZoneId.systemDefault());
+            return LocalDateTime.ofInstant(Instant.ofEpochMilli(clientLastModifiedMs), ZoneId.of("Asia/Seoul"));
         }
-        return LocalDateTime.now();
+        return LocalDateTime.now(ZoneId.of("Asia/Seoul"));
     }
 }
